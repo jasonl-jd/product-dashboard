@@ -93,23 +93,6 @@ button {
   min-width: 0;
 }
 
-.brand-mark {
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  width: 48px;
-  height: 48px;
-  border: 3px solid #fff;
-  border-radius: 50%;
-  background: var(--green);
-  color: var(--black);
-  font-size: 18px;
-  font-family: var(--font-primary);
-  line-height: 1;
-  font-weight: 900;
-  letter-spacing: 0;
-}
-
 .identity h1,
 .identity p {
   margin: 0;

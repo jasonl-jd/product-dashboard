@@ -5,7 +5,7 @@ A static product performance dashboard for weekly sales workbooks with a `Detail
 ## What It Does
 
 - Upload one or more `.xlsx` or `.xlsm` sales files.
-- Uses a JD Sports Canada-inspired black workspace with a yellow `#ffdd00` primary accent.
+- Uses a black workspace with a yellow `#ffdd00` primary accent.
 - References Gotham Ultra for primary headings and Gotham Bold for secondary UI text when those fonts are installed locally.
 - Reads the `Detail` worksheet and appends new rows to saved browser data.
 - De-duplicates repeat uploads by file hash and row key.
