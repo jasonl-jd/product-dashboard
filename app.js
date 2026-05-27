@@ -441,6 +441,7 @@ function normalizeRecord(cells, fieldIndex, fileName, sourceHash, rowNumber) {
   for (const dimension of DIMENSIONS) {
     record[dimension.key] = cleanDimension(cells[fieldIndex[dimension.key]]);
   }
+  record.status = normalizeStatus(record.status);
 
   record.rowKey = [
     record.orderId,
@@ -465,12 +466,13 @@ function renderAll() {
   renderFilters();
   const filtered = applyDimensionFilters(state.records);
   const current = filtered.filter((record) => inDateRange(record, dom.currentStart.value, dom.currentEnd.value));
-  const comparison = filtered.filter((record) => inDateRange(record, dom.compareStart.value, dom.compareEnd.value));
+  const hasComparison = hasComparisonPeriod();
+  const comparison = hasComparison ? filtered.filter((record) => inDateRange(record, dom.compareStart.value, dom.compareEnd.value)) : [];
   const currentSummary = summarize(current);
   const compareSummary = summarize(comparison);
 
-  renderKpis(currentSummary, compareSummary);
-  state.pivotRows = buildPivot(current, comparison);
+  renderKpis(currentSummary, compareSummary, hasComparison);
+  state.pivotRows = buildPivot(current, comparison, hasComparison);
   state.productRows = buildProductResults(current);
   renderChart(state.pivotRows);
   renderFiles();
@@ -478,16 +480,22 @@ function renderAll() {
   renderProductTable(state.productRows);
 }
 
-function renderKpis(current, comparison) {
-  setKpi(dom.kpiSales, dom.kpiSalesDelta, formatCurrency(current.netSales), percentChange(current.netSales, comparison.netSales));
-  setKpi(dom.kpiUnits, dom.kpiUnitsDelta, formatNumber(current.netUnits), percentChange(current.netUnits, comparison.netUnits));
-  setKpi(dom.kpiOrders, dom.kpiOrdersDelta, formatNumber(current.orders), percentChange(current.orders, comparison.orders));
-  setKpi(dom.kpiAur, dom.kpiAurDelta, formatCurrencyPrecise(current.aur), percentChange(current.aur, comparison.aur));
+function renderKpis(current, comparison, hasComparison) {
+  setKpi(dom.kpiSales, dom.kpiSalesDelta, formatCurrency(current.netSales), hasComparison ? percentChange(current.netSales, comparison.netSales) : null, hasComparison);
+  setKpi(dom.kpiUnits, dom.kpiUnitsDelta, formatNumber(current.netUnits), hasComparison ? percentChange(current.netUnits, comparison.netUnits) : null, hasComparison);
+  setKpi(dom.kpiOrders, dom.kpiOrdersDelta, formatNumber(current.orders), hasComparison ? percentChange(current.orders, comparison.orders) : null, hasComparison);
+  setKpi(dom.kpiAur, dom.kpiAurDelta, formatCurrencyPrecise(current.aov), hasComparison ? percentChange(current.aov, comparison.aov) : null, hasComparison);
 }
 
-function setKpi(valueElement, deltaElement, value, delta) {
+function setKpi(valueElement, deltaElement, value, delta, hasComparison = true) {
   valueElement.textContent = value;
-  deltaElement.classList.remove("positive", "negative");
+  deltaElement.classList.remove("positive", "negative", "no-compare");
+
+  if (!hasComparison) {
+    deltaElement.textContent = "";
+    deltaElement.classList.add("no-compare");
+    return;
+  }
 
   if (delta === null) {
     deltaElement.textContent = "n/a";
@@ -594,18 +602,18 @@ function clearAllFilters() {
   renderAll();
 }
 
-function buildPivot(currentRecords, comparisonRecords) {
+function buildPivot(currentRecords, comparisonRecords, hasComparison) {
   const dimension = getActiveDimension();
   const currentMap = aggregateByDimension(currentRecords, dimension.key);
   const compareMap = aggregateByDimension(comparisonRecords, dimension.key);
   const totalSales = sum(currentRecords, "netSales");
   const totalUnits = sum(currentRecords, "netUnits");
-  const values = new Set([...currentMap.keys(), ...compareMap.keys()]);
+  const values = hasComparison ? new Set([...currentMap.keys(), ...compareMap.keys()]) : new Set(currentMap.keys());
 
   const rows = Array.from(values).map((value) => {
     const current = currentMap.get(value) || emptyAggregate();
     const comparison = compareMap.get(value) || emptyAggregate();
-    const change = current.netSales - comparison.netSales;
+    const change = hasComparison ? current.netSales - comparison.netSales : null;
 
     return {
       value,
@@ -614,10 +622,11 @@ function buildPivot(currentRecords, comparisonRecords) {
       orders: current.orders.size,
       salesShare: totalSales ? current.netSales / totalSales : 0,
       unitsShare: totalUnits ? current.netUnits / totalUnits : 0,
-      compareSales: comparison.netSales,
-      compareUnits: comparison.netUnits,
+      hasComparison,
+      compareSales: hasComparison ? comparison.netSales : null,
+      compareUnits: hasComparison ? comparison.netUnits : null,
       change,
-      changePct: percentChange(current.netSales, comparison.netSales)
+      changePct: hasComparison ? percentChange(current.netSales, comparison.netSales) : null
     };
   });
 
@@ -729,9 +738,9 @@ function renderPivotTable(rows) {
       <td class="numeric">${formatPercent(row.salesShare)}</td>
       <td class="numeric">${formatNumber(row.netUnits)}</td>
       <td class="numeric">${formatPercent(row.unitsShare)}</td>
-      <td class="numeric">${formatCurrency(row.compareSales)}</td>
-      <td class="numeric ${row.change > 0 ? "delta-positive" : row.change < 0 ? "delta-negative" : ""}">${formatCurrency(row.change)}</td>
-      <td class="numeric ${row.change > 0 ? "delta-positive" : row.change < 0 ? "delta-negative" : ""}">${row.changePct === null ? "n/a" : formatPercent(row.changePct)}</td>
+      <td class="numeric">${row.hasComparison ? formatCurrency(row.compareSales) : ""}</td>
+      <td class="numeric ${row.hasComparison && row.change > 0 ? "delta-positive" : row.hasComparison && row.change < 0 ? "delta-negative" : ""}">${row.hasComparison ? formatCurrency(row.change) : ""}</td>
+      <td class="numeric ${row.hasComparison && row.change > 0 ? "delta-positive" : row.hasComparison && row.change < 0 ? "delta-negative" : ""}">${row.hasComparison ? (row.changePct === null ? "n/a" : formatPercent(row.changePct)) : ""}</td>
     </tr>
   `).join("");
 }
@@ -818,7 +827,7 @@ function summarize(records) {
     netSales,
     netUnits,
     orders: orders.size,
-    aur: netUnits ? netSales / netUnits : 0
+    aov: orders.size ? netSales / orders.size : 0
   };
 }
 
@@ -835,6 +844,10 @@ function inDateRange(record, start, end) {
   if (start && record.dateKey < start) return false;
   if (end && record.dateKey > end) return false;
   return true;
+}
+
+function hasComparisonPeriod() {
+  return Boolean(dom.compareStart.value && dom.compareEnd.value);
 }
 
 function ensureDateDefaults(force = false) {
@@ -942,9 +955,9 @@ function exportPivotCsv() {
       row.salesShare,
       row.netUnits,
       row.unitsShare,
-      row.compareSales,
-      row.change,
-      row.changePct ?? ""
+      row.hasComparison ? row.compareSales : "",
+      row.hasComparison ? row.change : "",
+      row.hasComparison ? (row.changePct === null ? "n/a" : row.changePct) : ""
     ])
   ];
   downloadFile(`pivot-${dimension.key}-${todayKey()}.csv`, lines.map(csvLine).join("\n"), "text/csv");
@@ -1487,6 +1500,11 @@ function cleanText(value) {
 
 function cleanDimension(value) {
   return cleanText(value) || BLANK;
+}
+
+function normalizeStatus(value) {
+  const status = cleanDimension(value);
+  return status.toUpperCase() === "#VALUE" || status.toUpperCase() === "#VALUE!" ? "Full Price" : status;
 }
 
 function toText(value) {
