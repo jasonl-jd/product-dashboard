@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Product Performance Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="identity">
+        <div class="brand-mark" aria-hidden="true">JD</div>
+        <div>
+          <p class="eyebrow">JD Sports Canada</p>
+          <h1>Product Performance Dashboard</h1>
+        </div>
+      </div>
+      <div class="topbar-meta">
+        <span id="data-range">No data loaded</span>
+        <span id="record-count">0 rows</span>
+      </div>
+      <div class="topbar-actions">
+        <input id="file-input" class="visually-hidden" type="file" accept=".xlsx,.xlsm" multiple>
+        <label class="button primary" for="file-input">Upload</label>
+        <input id="json-input" class="visually-hidden" type="file" accept=".json">
+        <label class="button" for="json-input">Import Data</label>
+        <button id="export-json" class="button" type="button">Export Data</button>
+        <button id="reset-data" class="button danger" type="button">Reset</button>
+      </div>
+    </header>
+
+    <main class="app-shell">
+      <aside class="controls" aria-label="Dashboard controls">
+        <section class="control-section">
+          <div class="section-title">Periods</div>
+          <div class="date-grid">
+            <label>
+              <span>Current Start</span>
+              <input id="current-start" type="date">
+            </label>
+            <label>
+              <span>Current End</span>
+              <input id="current-end" type="date">
+            </label>
+            <label>
+              <span>Compare Start</span>
+              <input id="compare-start" type="date">
+            </label>
+            <label>
+              <span>Compare End</span>
+              <input id="compare-end" type="date">
+            </label>
+          </div>
+          <div class="inline-actions">
+            <button id="all-dates" class="button compact" type="button">All Dates</button>
+            <button id="previous-period" class="button compact" type="button">Previous Period</button>
+          </div>
+        </section>
+
+        <section class="control-section">
+          <div class="section-title">Pivot</div>
+          <label>
+            <span>Rows</span>
+            <select id="dimension-select"></select>
+          </label>
+          <div class="select-row">
+            <label>
+              <span>Sort</span>
+              <select id="sort-select">
+                <option value="netSales">Net Sales</option>
+                <option value="netUnits">Net Units</option>
+                <option value="salesShare">Sales %</option>
+                <option value="change">Sales Change</option>
+                <option value="changePct">Change %</option>
+                <option value="value">Name</option>
+              </select>
+            </label>
+            <label>
+              <span>Order</span>
+              <select id="sort-dir">
+                <option value="desc">Desc</option>
+                <option value="asc">Asc</option>
+              </select>
+            </label>
+          </div>
+          <label>
+            <span>Rows Shown</span>
+            <select id="row-limit">
+              <option value="10">10</option>
+              <option value="25" selected>25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="all">All</option>
+            </select>
+          </label>
+          <button id="export-csv" class="button full-width" type="button">Export Pivot CSV</button>
+        </section>
+
+        <section class="control-section filters-section">
+          <div class="section-title-row">
+            <div class="section-title">Filters</div>
+            <button id="clear-filters" class="text-button" type="button">Clear</button>
+          </div>
+          <div id="filters" class="filters"></div>
+        </section>
+      </aside>
+
+      <section class="dashboard" aria-live="polite">
+        <div id="status" class="status-bar">Ready</div>
+
+        <section class="kpi-grid" aria-label="Key metrics">
+          <article class="kpi-card">
+            <span>Net Sales</span>
+            <strong id="kpi-sales">$0</strong>
+            <em id="kpi-sales-delta">0.0%</em>
+          </article>
+          <article class="kpi-card">
+            <span>Net Units</span>
+            <strong id="kpi-units">0</strong>
+            <em id="kpi-units-delta">0.0%</em>
+          </article>
+          <article class="kpi-card">
+            <span>Orders</span>
+            <strong id="kpi-orders">0</strong>
+            <em id="kpi-orders-delta">0.0%</em>
+          </article>
+          <article class="kpi-card">
+            <span>Average Unit Retail</span>
+            <strong id="kpi-aur">$0</strong>
+            <em id="kpi-aur-delta">0.0%</em>
+          </article>
+        </section>
+
+        <section class="visual-grid">
+          <article class="panel chart-panel">
+            <div class="panel-head">
+              <div>
+                <span class="panel-kicker">Current Period</span>
+                <h2 id="chart-heading">Net Sales</h2>
+              </div>
+              <span id="active-dimension" class="pill">Shipping Province</span>
+            </div>
+            <div id="bar-chart" class="bar-chart"></div>
+          </article>
+
+          <article class="panel file-panel">
+            <div class="panel-head">
+              <div>
+                <span class="panel-kicker">Source Files</span>
+                <h2>Imports</h2>
+              </div>
+            </div>
+            <div class="table-scroll tight">
+              <table class="file-table">
+                <thead>
+                  <tr>
+                    <th>File</th>
+                    <th>Rows</th>
+                    <th>Dates</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="file-tbody"></tbody>
+              </table>
+            </div>
+          </article>
+        </section>
+
+        <section class="panel table-panel">
+          <div class="panel-head">
+            <div>
+              <span class="panel-kicker">Pivot Table</span>
+              <h2 id="pivot-heading">Performance by Shipping Province</h2>
+            </div>
+          </div>
+          <div class="table-scroll">
+            <table class="pivot-table">
+              <thead>
+                <tr>
+                  <th><button data-sort-key="value" type="button">Name</button></th>
+                  <th><button data-sort-key="netSales" type="button">Net Sales</button></th>
+                  <th><button data-sort-key="salesShare" type="button">% Sales</button></th>
+                  <th><button data-sort-key="netUnits" type="button">Net Units</button></th>
+                  <th><button data-sort-key="unitsShare" type="button">% Units</button></th>
+                  <th><button data-sort-key="compareSales" type="button">Compare Sales</button></th>
+                  <th><button data-sort-key="change" type="button">Change</button></th>
+                  <th><button data-sort-key="changePct" type="button">Change %</button></th>
+                </tr>
+              </thead>
+              <tbody id="pivot-tbody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel table-panel">
+          <div class="panel-head">
+            <div>
+              <span class="panel-kicker">Products</span>
+              <h2 id="product-heading">Product Results</h2>
+            </div>
+          </div>
+          <div class="table-scroll product-scroll">
+            <table class="product-table">
+              <thead>
+                <tr>
+                  <th>Product</th>
+                  <th>SKU</th>
+                  <th>Net Sales</th>
+                  <th>Net Units Sold</th>
+                  <th>% Sales</th>
+                </tr>
+              </thead>
+              <tbody id="product-tbody"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>
