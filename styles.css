@@ -466,6 +466,10 @@ select:focus {
   color: var(--red);
 }
 
+.kpi-card em.no-compare {
+  display: none;
+}
+
 .visual-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.55fr) minmax(360px, 0.85fr);
@@ -493,6 +497,14 @@ select:focus {
   line-height: 1.2;
   letter-spacing: 0;
   font-weight: 900;
+}
+
+.panel-head-with-control {
+  align-items: center;
+}
+
+.panel-control {
+  width: min(180px, 38vw);
 }
 
 .pill {
@@ -580,6 +592,10 @@ select:focus {
   max-height: 620px;
 }
 
+.regional-scroll {
+  max-height: 760px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -627,10 +643,19 @@ th.numeric {
 }
 
 .pivot-table td:first-child,
+.regional-product-table td:nth-child(3),
 .product-table td:first-child,
 .file-table td:first-child {
   min-width: 180px;
   max-width: 320px;
+}
+
+.regional-product-table td:first-child {
+  min-width: 110px;
+}
+
+.regional-product-table td:nth-child(4) {
+  max-width: 130px;
 }
 
 .product-table td:nth-child(2) {

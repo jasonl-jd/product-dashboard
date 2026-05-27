@@ -11,6 +11,7 @@ const MAX_FILTER_OPTIONS = 180;
 
 const DIMENSIONS = [
   { key: "shippingProvince", label: "Shipping Province", headers: ["Shipping Province"] },
+  { key: "region", label: "Region", headers: ["Region"] },
   { key: "status", label: "Status", headers: ["Status"] },
   { key: "group", label: "Group", headers: ["Group"] },
   { key: "department", label: "Department", headers: ["Department"] },
@@ -21,6 +22,17 @@ const DIMENSIONS = [
   { key: "collection", label: "Collection", headers: ["Collection"] },
   { key: "customerType", label: "Customer Type", headers: ["Customer Type"] }
 ];
+
+const REGION_DEFS = [
+  { key: "BC", label: "BC", provinces: ["British Columbia"] },
+  { key: "ON", label: "ON", provinces: ["Ontario"] },
+  { key: "Prairies", label: "Prairies", provinces: ["Alberta", "Saskatchewan", "Manitoba"] },
+  { key: "QC + Atlantic", label: "QC + Atlantic", provinces: ["Quebec", "Prince Edward Island", "Newfoundland and Labrador", "Nova Scotia", "New Brunswick"] }
+];
+
+const PROVINCE_TO_REGION = new Map(
+  REGION_DEFS.flatMap((region) => region.provinces.map((province) => [normalizeRegionProvince(province), region.label]))
+);
 
 const FIELD_DEFS = [
   { key: "sku", label: "SKU", headers: ["SKU"] },
@@ -52,6 +64,7 @@ const state = {
   filterSearch: {},
   pivotRows: [],
   productRows: [],
+  regionalProductRows: [],
   dateTouched: false,
   loading: false
 };
@@ -120,7 +133,9 @@ function collectDom() {
     pivotHeading: document.querySelector("#pivot-heading"),
     pivotTbody: document.querySelector("#pivot-tbody"),
     productHeading: document.querySelector("#product-heading"),
-    productTbody: document.querySelector("#product-tbody")
+    productTbody: document.querySelector("#product-tbody"),
+    regionalProductSort: document.querySelector("#regional-product-sort"),
+    regionalProductsTbody: document.querySelector("#regional-products-tbody")
   });
 }
 
@@ -135,6 +150,7 @@ function bindEvents() {
   dom.sortSelect.addEventListener("change", renderAll);
   dom.sortDir.addEventListener("change", renderAll);
   dom.rowLimit.addEventListener("change", renderAll);
+  dom.regionalProductSort.addEventListener("change", renderAll);
   dom.exportCsv.addEventListener("click", exportPivotCsv);
   dom.clearFilters.addEventListener("click", clearAllFilters);
 
@@ -442,6 +458,7 @@ function normalizeRecord(cells, fieldIndex, fileName, sourceHash, rowNumber) {
     record[dimension.key] = cleanDimension(cells[fieldIndex[dimension.key]]);
   }
   record.status = normalizeStatus(record.status);
+  record.region = getRegion(record.shippingProvince);
 
   record.rowKey = [
     record.orderId,
@@ -474,10 +491,12 @@ function renderAll() {
   renderKpis(currentSummary, compareSummary, hasComparison);
   state.pivotRows = buildPivot(current, comparison, hasComparison);
   state.productRows = buildProductResults(current);
+  state.regionalProductRows = buildRegionalTopProducts(current);
   renderChart(state.pivotRows);
   renderFiles();
   renderPivotTable(state.pivotRows);
   renderProductTable(state.productRows);
+  renderRegionalTopProducts(state.regionalProductRows);
 }
 
 function renderKpis(current, comparison, hasComparison) {
@@ -812,6 +831,56 @@ function renderProductTable(rows) {
   dom.productTbody.innerHTML = bodyRows.join("");
 }
 
+function buildRegionalTopProducts(records) {
+  const sortKey = dom.regionalProductSort?.value === "netUnits" ? "netUnits" : "netSales";
+  const rows = [];
+
+  for (const region of REGION_DEFS) {
+    const regionalRecords = records.filter((record) => record.region === region.label);
+    const products = buildProductResults(regionalRecords)
+      .sort((a, b) => sortRegionalProducts(a, b, sortKey))
+      .slice(0, 20);
+
+    products.forEach((product, index) => {
+      rows.push({
+        region: region.label,
+        rank: index + 1,
+        ...product
+      });
+    });
+  }
+
+  return rows;
+}
+
+function sortRegionalProducts(a, b, sortKey) {
+  const primary = (b[sortKey] || 0) - (a[sortKey] || 0);
+  if (primary) return primary;
+  const secondary = (b.netSales || 0) - (a.netSales || 0);
+  if (secondary) return secondary;
+  return collator.compare(a.productTitle, b.productTitle);
+}
+
+function renderRegionalTopProducts(rows) {
+  if (!dom.regionalProductsTbody) return;
+
+  if (!rows.length) {
+    dom.regionalProductsTbody.innerHTML = `<tr><td colspan="6">No regional product results for the selected period and filters</td></tr>`;
+    return;
+  }
+
+  dom.regionalProductsTbody.innerHTML = rows.map((row) => `
+    <tr>
+      <td>${escapeHtml(row.region)}</td>
+      <td class="numeric">${numberFormat.format(row.rank)}</td>
+      <td><div class="clip" title="${escapeHtml(row.productTitle)}">${escapeHtml(row.productTitle)}</div></td>
+      <td><div class="clip" title="${escapeHtml(row.sku)}">${escapeHtml(row.sku)}</div></td>
+      <td class="numeric">${formatCurrency(row.netSales)}</td>
+      <td class="numeric">${formatNumber(row.netUnits)}</td>
+    </tr>
+  `).join("");
+}
+
 function summarize(records) {
   const orders = new Set();
   let netSales = 0;
@@ -1038,9 +1107,9 @@ async function loadPersistedData() {
     getAllFromStore("records"),
     getAllFromStore("files")
   ]);
-  state.records = records;
+  state.records = records.map(hydrateRecord);
   state.files = files;
-  state.rowKeys = new Set(records.map((record) => record.rowKey));
+  state.rowKeys = new Set(state.records.map((record) => record.rowKey));
 }
 
 function getAllFromStore(storeName) {
@@ -1063,7 +1132,7 @@ async function saveRecordsAndFiles(records, files) {
   const transaction = state.db.transaction(["records", "files"], "readwrite");
   const recordStore = transaction.objectStore("records");
   const fileStore = transaction.objectStore("files");
-  for (const record of records) recordStore.put(record);
+  for (const record of records) recordStore.put(hydrateRecord(record));
   for (const file of files) fileStore.put(file);
   await transactionDone(transaction);
 }
@@ -1502,9 +1571,29 @@ function cleanDimension(value) {
   return cleanText(value) || BLANK;
 }
 
+function hydrateRecord(record) {
+  return {
+    ...record,
+    status: normalizeStatus(record.status),
+    region: getRegion(record.shippingProvince)
+  };
+}
+
 function normalizeStatus(value) {
   const status = cleanDimension(value);
   return status.toUpperCase() === "#VALUE" || status.toUpperCase() === "#VALUE!" ? "Full Price" : status;
+}
+
+function getRegion(province) {
+  const normalizedProvince = normalizeRegionProvince(province);
+  return PROVINCE_TO_REGION.get(normalizedProvince) || "Other";
+}
+
+function normalizeRegionProvince(province) {
+  return cleanText(province)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
 function toText(value) {

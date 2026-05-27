@@ -11,6 +11,7 @@ A static product performance dashboard for weekly sales workbooks with a `Detail
 - De-duplicates repeat uploads by file hash and row key.
 - Filters and pivots by:
   - Shipping Province
+  - Region
   - Status
   - Group
   - Department
@@ -22,6 +23,7 @@ A static product performance dashboard for weekly sales workbooks with a `Detail
   - Customer Type
 - Compares one date period to another.
 - Shows net sales, net units, percent of sales, percent of units, comparison sales, and change metrics.
+- Shows the top 20 products by region, sortable by net sales or net units sold.
 - Shows a full product-results panel with net sales, net units sold, and percent of sales for the current result set.
 - Exports the current pivot table to CSV.
 - Exports and imports the saved dashboard dataset as JSON.
@@ -33,6 +35,13 @@ The app expects a worksheet named `Detail` with these headers:
 `Date`, `Net Sales`, `Net Quantity`, `Shipping Province`, `Status`, `Group`, `Department`, `Color`, `Brand`, `Class`, `Sub-Class`, `Collection`, `Customer Type`
 
 The sample file also includes `SKU`, `Product Title`, and `Order ID`; the dashboard uses those fields for row identity and order counts when present.
+
+Regions are derived from `Shipping Province`:
+
+- BC: British Columbia
+- ON: Ontario
+- Prairies: Alberta, Saskatchewan, Manitoba
+- QC + Atlantic: Quebec, Prince Edward Island, Newfoundland and Labrador, Nova Scotia, New Brunswick
 
 ## Local Use
 

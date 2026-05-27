@@ -124,7 +124,7 @@
             <em id="kpi-orders-delta">0.0%</em>
           </article>
           <article class="kpi-card">
-            <span>Average Unit Retail</span>
+            <span>Average Order Value</span>
             <strong id="kpi-aur">$0</strong>
             <em id="kpi-aur-delta">0.0%</em>
           </article>
@@ -163,6 +163,37 @@
               </table>
             </div>
           </article>
+        </section>
+
+        <section class="panel table-panel">
+          <div class="panel-head panel-head-with-control">
+            <div>
+              <span class="panel-kicker">Regional Leaders</span>
+              <h2>Top 20 Products by Region</h2>
+            </div>
+            <label class="panel-control">
+              <span>Sort By</span>
+              <select id="regional-product-sort">
+                <option value="netSales" selected>Net Sales</option>
+                <option value="netUnits">Net Units Sold</option>
+              </select>
+            </label>
+          </div>
+          <div class="table-scroll regional-scroll">
+            <table class="regional-product-table">
+              <thead>
+                <tr>
+                  <th>Region</th>
+                  <th>Rank</th>
+                  <th>Product</th>
+                  <th>SKU</th>
+                  <th>Net Sales</th>
+                  <th>Net Units Sold</th>
+                </tr>
+              </thead>
+              <tbody id="regional-products-tbody"></tbody>
+            </table>
+          </div>
         </section>
 
         <section class="panel table-panel">
