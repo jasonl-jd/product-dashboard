@@ -5,6 +5,7 @@ A static product performance dashboard for weekly sales workbooks with a `Detail
 ## What It Does
 
 - Upload one or more `.xlsx` or `.xlsm` sales files.
+- Uses a JD Sports Canada-inspired black workspace with a yellow `#ffdd00` primary accent.
 - References Gotham Ultra for primary headings and Gotham Bold for secondary UI text when those fonts are installed locally.
 - Reads the `Detail` worksheet and appends new rows to saved browser data.
 - De-duplicates repeat uploads by file hash and row key.
@@ -54,6 +55,14 @@ http://localhost:8080
 3. In GitHub, go to `Settings` > `Pages`.
 4. Set the source to your main branch and root folder.
 5. Open the published Pages URL.
+
+Use the GitHub Pages URL, not the normal GitHub repository file preview. The Pages URL usually looks like:
+
+```text
+https://your-username.github.io/your-repo-name/
+```
+
+If the page says `App loading...` and never changes to `Ready`, `app.js` is not being served or was not uploaded. If an upload fails, the status bar at the top of the dashboard will show the import error.
 
 ## Data Storage
 
