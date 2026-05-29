@@ -125,119 +125,134 @@
           </article>
         </section>
 
-        <section class="visual-grid">
-          <article class="panel chart-panel">
-            <div class="panel-head">
-              <div>
-                <span class="panel-kicker">Current Period</span>
-                <h2 id="chart-heading">Net Sales</h2>
-              </div>
-              <span id="active-dimension" class="pill">Shipping Province</span>
-            </div>
-            <div id="bar-chart" class="bar-chart"></div>
-          </article>
+        <div class="view-tabs" role="tablist" aria-label="Dashboard views">
+          <button class="tab-button active" type="button" role="tab" aria-selected="true" data-view-tab="performance">Performance</button>
+          <button class="tab-button" type="button" role="tab" aria-selected="false" data-view-tab="regional">Regional Top 20</button>
+        </div>
 
-          <article class="panel file-panel">
-            <div class="panel-head">
-              <div>
-                <span class="panel-kicker">Repository Files</span>
-                <h2>Shared Data</h2>
-              </div>
+        <section class="dashboard-view active" data-view-panel="performance" role="tabpanel">
+          <div class="workspace-grid">
+            <div class="analysis-stack">
+              <section class="visual-grid">
+                <article class="panel chart-panel">
+                  <div class="panel-head">
+                    <div>
+                      <span class="panel-kicker">Current Period</span>
+                      <h2 id="chart-heading">Net Sales</h2>
+                    </div>
+                    <span id="active-dimension" class="pill">Shipping Province</span>
+                  </div>
+                  <div id="bar-chart" class="bar-chart"></div>
+                </article>
+
+                <article class="panel file-panel">
+                  <div class="panel-head">
+                    <div>
+                      <span class="panel-kicker">Repository Files</span>
+                      <h2>Shared Data</h2>
+                    </div>
+                  </div>
+                  <div class="table-scroll tight">
+                    <table class="file-table">
+                      <thead>
+                        <tr>
+                          <th>File</th>
+                          <th>Rows</th>
+                          <th>Dates</th>
+                          <th>Source</th>
+                        </tr>
+                      </thead>
+                      <tbody id="file-tbody"></tbody>
+                    </table>
+                  </div>
+                </article>
+              </section>
+
+              <section class="panel table-panel">
+                <div class="panel-head">
+                  <div>
+                    <span class="panel-kicker">Pivot Table</span>
+                    <h2 id="pivot-heading">Performance by Shipping Province</h2>
+                  </div>
+                </div>
+                <div class="table-scroll">
+                  <table class="pivot-table">
+                    <thead>
+                      <tr>
+                        <th><button data-sort-key="value" type="button">Name</button></th>
+                        <th><button data-sort-key="netSales" type="button">Net Sales</button></th>
+                        <th><button data-sort-key="salesShare" type="button">% Sales</button></th>
+                        <th><button data-sort-key="netUnits" type="button">Net Units</button></th>
+                        <th><button data-sort-key="unitsShare" type="button">% Units</button></th>
+                        <th><button data-sort-key="compareSales" type="button">Compare Sales</button></th>
+                        <th><button data-sort-key="change" type="button">Change</button></th>
+                        <th><button data-sort-key="changePct" type="button">Change %</button></th>
+                      </tr>
+                    </thead>
+                    <tbody id="pivot-tbody"></tbody>
+                  </table>
+                </div>
+              </section>
             </div>
-            <div class="table-scroll tight">
-              <table class="file-table">
+
+            <aside class="panel table-panel product-side" aria-label="Product results">
+              <div class="panel-head">
+                <div>
+                  <span class="panel-kicker">Products</span>
+                  <h2 id="product-heading">Product Results</h2>
+                </div>
+              </div>
+              <div class="table-scroll product-scroll">
+                <table class="product-table">
+                  <thead>
+                    <tr>
+                      <th>Product</th>
+                      <th>SKU</th>
+                      <th>Net Sales</th>
+                      <th>Net Units Sold</th>
+                      <th>% Sales</th>
+                      <th>Sales Change</th>
+                      <th>Change %</th>
+                    </tr>
+                  </thead>
+                  <tbody id="product-tbody"></tbody>
+                </table>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="dashboard-view" data-view-panel="regional" role="tabpanel" hidden>
+          <section class="panel table-panel">
+            <div class="panel-head panel-head-with-control">
+              <div>
+                <span class="panel-kicker">Regional Leaders</span>
+                <h2>Top 20 Products by Region</h2>
+              </div>
+              <label class="panel-control">
+                <span>Sort By</span>
+                <select id="regional-product-sort">
+                  <option value="netSales" selected>Net Sales</option>
+                  <option value="netUnits">Net Units Sold</option>
+                </select>
+              </label>
+            </div>
+            <div class="table-scroll regional-scroll">
+              <table class="regional-product-table">
                 <thead>
                   <tr>
-                    <th>File</th>
-                    <th>Rows</th>
-                    <th>Dates</th>
-                    <th>Source</th>
+                    <th>Region</th>
+                    <th>Rank</th>
+                    <th>Product</th>
+                    <th>SKU</th>
+                    <th>Net Sales</th>
+                    <th>Net Units Sold</th>
                   </tr>
                 </thead>
-                <tbody id="file-tbody"></tbody>
+                <tbody id="regional-products-tbody"></tbody>
               </table>
             </div>
-          </article>
-        </section>
-
-        <section class="panel table-panel">
-          <div class="panel-head panel-head-with-control">
-            <div>
-              <span class="panel-kicker">Regional Leaders</span>
-              <h2>Top 20 Products by Region</h2>
-            </div>
-            <label class="panel-control">
-              <span>Sort By</span>
-              <select id="regional-product-sort">
-                <option value="netSales" selected>Net Sales</option>
-                <option value="netUnits">Net Units Sold</option>
-              </select>
-            </label>
-          </div>
-          <div class="table-scroll regional-scroll">
-            <table class="regional-product-table">
-              <thead>
-                <tr>
-                  <th>Region</th>
-                  <th>Rank</th>
-                  <th>Product</th>
-                  <th>SKU</th>
-                  <th>Net Sales</th>
-                  <th>Net Units Sold</th>
-                </tr>
-              </thead>
-              <tbody id="regional-products-tbody"></tbody>
-            </table>
-          </div>
-        </section>
-
-        <section class="panel table-panel">
-          <div class="panel-head">
-            <div>
-              <span class="panel-kicker">Pivot Table</span>
-              <h2 id="pivot-heading">Performance by Shipping Province</h2>
-            </div>
-          </div>
-          <div class="table-scroll">
-            <table class="pivot-table">
-              <thead>
-                <tr>
-                  <th><button data-sort-key="value" type="button">Name</button></th>
-                  <th><button data-sort-key="netSales" type="button">Net Sales</button></th>
-                  <th><button data-sort-key="salesShare" type="button">% Sales</button></th>
-                  <th><button data-sort-key="netUnits" type="button">Net Units</button></th>
-                  <th><button data-sort-key="unitsShare" type="button">% Units</button></th>
-                  <th><button data-sort-key="compareSales" type="button">Compare Sales</button></th>
-                  <th><button data-sort-key="change" type="button">Change</button></th>
-                  <th><button data-sort-key="changePct" type="button">Change %</button></th>
-                </tr>
-              </thead>
-              <tbody id="pivot-tbody"></tbody>
-            </table>
-          </div>
-        </section>
-
-        <section class="panel table-panel">
-          <div class="panel-head">
-            <div>
-              <span class="panel-kicker">Products</span>
-              <h2 id="product-heading">Product Results</h2>
-            </div>
-          </div>
-          <div class="table-scroll product-scroll">
-            <table class="product-table">
-              <thead>
-                <tr>
-                  <th>Product</th>
-                  <th>SKU</th>
-                  <th>Net Sales</th>
-                  <th>Net Units Sold</th>
-                  <th>% Sales</th>
-                </tr>
-              </thead>
-              <tbody id="product-tbody"></tbody>
-            </table>
-          </div>
+          </section>
         </section>
       </section>
     </main>

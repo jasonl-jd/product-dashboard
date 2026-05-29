@@ -23,8 +23,8 @@ A static product performance dashboard for weekly sales CSV exports. It can be h
   - Customer Type
 - Compares one date period to another.
 - Shows net sales, net units, percent of sales, percent of units, comparison sales, and change metrics.
-- Shows the top 20 products by region, sortable by net sales or net units sold.
-- Shows a full product-results panel with net sales, net units sold, and percent of sales for the current result set.
+- Shows the top 20 products by region in a separate dashboard tab, sortable by net sales or net units sold.
+- Shows a right-side product-results panel with net sales, net units sold, percent of sales, sales dollar change, and sales percent change.
 - Exports the current pivot table to CSV.
 
 ## Expected CSV Shape

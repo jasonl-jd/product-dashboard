@@ -119,7 +119,8 @@ function collectDom() {
     productHeading: document.querySelector("#product-heading"),
     productTbody: document.querySelector("#product-tbody"),
     regionalProductSort: document.querySelector("#regional-product-sort"),
-    regionalProductsTbody: document.querySelector("#regional-products-tbody")
+    regionalProductsTbody: document.querySelector("#regional-products-tbody"),
+    viewTabs: document.querySelector(".view-tabs")
   });
 }
 
@@ -145,6 +146,7 @@ function bindEvents() {
   dom.filters.addEventListener("input", handleFilterInput);
   dom.filters.addEventListener("change", handleFilterChange);
   dom.filters.addEventListener("click", handleFilterClick);
+  dom.viewTabs?.addEventListener("click", handleViewTabClick);
 
   document.querySelector(".pivot-table thead").addEventListener("click", (event) => {
     const button = event.target.closest("[data-sort-key]");
@@ -159,6 +161,23 @@ function bindEvents() {
     renderAll();
   });
 
+}
+
+function handleViewTabClick(event) {
+  const button = event.target.closest("[data-view-tab]");
+  if (!button) return;
+
+  const view = button.dataset.viewTab;
+  document.querySelectorAll("[data-view-tab]").forEach((tab) => {
+    const isActive = tab.dataset.viewTab === view;
+    tab.classList.toggle("active", isActive);
+    tab.setAttribute("aria-selected", String(isActive));
+  });
+  document.querySelectorAll("[data-view-panel]").forEach((panel) => {
+    const isActive = panel.dataset.viewPanel === view;
+    panel.classList.toggle("active", isActive);
+    panel.hidden = !isActive;
+  });
 }
 
 function populateDimensionSelect() {
@@ -686,7 +705,7 @@ function renderAll() {
 
   renderKpis(currentSummary, compareSummary, hasComparison);
   state.pivotRows = buildPivot(current, comparison, hasComparison);
-  state.productRows = buildProductResults(current);
+  state.productRows = buildProductResults(current, comparison, hasComparison);
   state.regionalProductRows = buildRegionalTopProducts(current);
   renderChart(state.pivotRows);
   renderFiles();
@@ -960,10 +979,32 @@ function renderPivotTable(rows) {
   `).join("");
 }
 
-function buildProductResults(records) {
+function buildProductResults(records, comparisonRecords = [], hasComparison = false) {
   const totalSales = sum(records, "netSales");
-  const map = new Map();
+  const currentMap = aggregateProducts(records);
+  const compareMap = hasComparison ? aggregateProducts(comparisonRecords) : new Map();
+  const productKeys = hasComparison ? new Set([...currentMap.keys(), ...compareMap.keys()]) : new Set(currentMap.keys());
 
+  return Array.from(productKeys)
+    .map((key) => {
+      const current = currentMap.get(key) || emptyProduct(key);
+      const comparison = compareMap.get(key) || emptyProduct(key);
+      const change = hasComparison ? current.netSales - comparison.netSales : null;
+
+      return {
+        ...current,
+        salesShare: totalSales ? current.netSales / totalSales : 0,
+        hasComparison,
+        compareSales: hasComparison ? comparison.netSales : null,
+        change,
+        changePct: hasComparison ? percentChange(current.netSales, comparison.netSales) : null
+      };
+    })
+    .sort((a, b) => b.netSales - a.netSales || collator.compare(a.productTitle, b.productTitle));
+}
+
+function aggregateProducts(records) {
+  const map = new Map();
   for (const record of records) {
     const title = record.productTitle || BLANK;
     const sku = record.sku || BLANK;
@@ -983,12 +1024,20 @@ function buildProductResults(records) {
     product.netUnits += record.netUnits;
   }
 
-  return Array.from(map.values())
-    .map((product) => ({
-      ...product,
-      salesShare: totalSales ? product.netSales / totalSales : 0
-    }))
-    .sort((a, b) => b.netSales - a.netSales || collator.compare(a.productTitle, b.productTitle));
+  return map;
+}
+
+function emptyProduct(key) {
+  const parts = String(key).split("|");
+  const sku = parts.shift() || BLANK;
+  const productTitle = parts.join("|") || BLANK;
+  return {
+    sku,
+    productTitle,
+    netSales: 0,
+    netUnits: 0,
+    salesShare: 0
+  };
 }
 
 function renderProductTable(rows) {
@@ -996,11 +1045,15 @@ function renderProductTable(rows) {
 
   const totalSales = sum(rows, "netSales");
   const totalUnits = sum(rows, "netUnits");
+  const hasComparison = rows.some((row) => row.hasComparison);
+  const totalCompareSales = hasComparison ? sum(rows, "compareSales") : 0;
+  const totalChange = hasComparison ? totalSales - totalCompareSales : null;
+  const totalChangePct = hasComparison ? percentChange(totalSales, totalCompareSales) : null;
   const suffix = rows.length === 1 ? "product" : "products";
   dom.productHeading.textContent = `Product Results (${numberFormat.format(rows.length)} ${suffix})`;
 
   if (!rows.length) {
-    dom.productTbody.innerHTML = `<tr><td colspan="5">No products for the selected period and filters</td></tr>`;
+    dom.productTbody.innerHTML = `<tr><td colspan="7">No products for the selected period and filters</td></tr>`;
     return;
   }
 
@@ -1011,6 +1064,8 @@ function renderProductTable(rows) {
       <td class="numeric">${formatCurrency(row.netSales)}</td>
       <td class="numeric">${formatNumber(row.netUnits)}</td>
       <td class="numeric">${formatPercent(row.salesShare)}</td>
+      <td class="numeric ${row.hasComparison && row.change > 0 ? "delta-positive" : row.hasComparison && row.change < 0 ? "delta-negative" : ""}">${row.hasComparison ? formatCurrency(row.change) : ""}</td>
+      <td class="numeric ${row.hasComparison && row.change > 0 ? "delta-positive" : row.hasComparison && row.change < 0 ? "delta-negative" : ""}">${row.hasComparison ? (row.changePct === null ? "n/a" : formatPercent(row.changePct)) : ""}</td>
     </tr>
   `);
 
@@ -1021,6 +1076,8 @@ function renderProductTable(rows) {
       <td class="numeric">${formatCurrency(totalSales)}</td>
       <td class="numeric">${formatNumber(totalUnits)}</td>
       <td class="numeric">${formatPercent(totalSales ? 1 : 0)}</td>
+      <td class="numeric">${hasComparison ? formatCurrency(totalChange) : ""}</td>
+      <td class="numeric">${hasComparison ? (totalChangePct === null ? "n/a" : formatPercent(totalChangePct)) : ""}</td>
     </tr>
   `);
 
