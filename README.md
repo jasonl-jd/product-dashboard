@@ -101,3 +101,15 @@ Example `data/manifest.json`:
 ```
 
 The static dashboard cannot write uploads back to GitHub by itself; data file management happens through repository commits controlled by the repository owner.
+
+## Troubleshooting Data Files
+
+If the dashboard says `Invalid XLSX file` or says a workbook loaded as HTML, the manifest path is not returning the actual Excel file.
+
+Check these items:
+
+- Use a repository file path such as `data/weekly-style-sales-2026-wk-15.xlsx`.
+- Do not use a GitHub `blob` URL such as `https://github.com/user/repo/blob/main/data/file.xlsx`.
+- File paths are case-sensitive on GitHub Pages.
+- Make sure the workbook is committed to the repository and GitHub Pages has redeployed.
+- If the file is stored with Git LFS, GitHub Pages may serve a small pointer text file instead of the workbook. In that case, store the actual `.xlsx` file in the repo without LFS or use a raw downloadable file URL that returns the real workbook bytes.
