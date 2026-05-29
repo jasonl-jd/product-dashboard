@@ -1,13 +1,13 @@
 # Product Performance Dashboard
 
-A static product performance dashboard for weekly sales workbooks with a `Detail` tab. It can be hosted directly on GitHub Pages and runs entirely in the browser.
+A static product performance dashboard for weekly sales CSV exports. It can be hosted directly on GitHub Pages and runs entirely in the browser.
 
 ## What It Does
 
-- Loads shared `.xlsx` or `.xlsm` sales files listed in `data/manifest.json`.
+- Loads shared `.csv` sales files listed in `data/manifest.json`.
 - Uses a black workspace with a yellow `#ffdd00` primary accent.
 - References Gotham Ultra for primary headings and Gotham Bold for secondary UI text when those fonts are installed locally.
-- Reads each workbook's `Detail` worksheet directly from the GitHub repository.
+- Reads each CSV file directly from the GitHub repository.
 - De-duplicates repeated rows by row key across repository files.
 - Filters and pivots by:
   - Shipping Province
@@ -27,9 +27,9 @@ A static product performance dashboard for weekly sales workbooks with a `Detail
 - Shows a full product-results panel with net sales, net units sold, and percent of sales for the current result set.
 - Exports the current pivot table to CSV.
 
-## Expected Workbook Shape
+## Expected CSV Shape
 
-The app expects a worksheet named `Detail` with these headers:
+The app expects each CSV to be a flat export with these headers in the first non-empty row:
 
 `Date`, `Net Sales`, `Net Quantity`, `Shipping Province`, `Status`, `Group`, `Department`, `Color`, `Brand`, `Class`, `Sub-Class`, `Collection`, `Customer Type`
 
@@ -78,10 +78,11 @@ Dashboard data is centralized in the GitHub repository. The app loads only the f
 
 To add or refresh data:
 
-1. Add the Excel workbook to the `data/` folder.
-2. Add an entry for the workbook in `data/manifest.json`.
-3. Commit and push the changes to GitHub.
-4. Wait for GitHub Pages to redeploy, then use `Refresh Data` in the dashboard.
+1. Export the source file's sales sheet as a CSV file. In the source workbook, that sheet can be named to match the file name; the dashboard reads the CSV headers and does not need a worksheet tab name.
+2. Add the CSV file to the `data/` folder.
+3. Add an entry for the CSV file in `data/manifest.json`.
+4. Commit and push the changes to GitHub.
+5. Wait for GitHub Pages to redeploy, then use `Refresh Data` in the dashboard.
 
 Example `data/manifest.json`:
 
@@ -89,11 +90,11 @@ Example `data/manifest.json`:
 {
   "files": [
     {
-      "path": "data/weekly-style-sales-2026-wk-15.xlsx",
+      "path": "data/weekly-style-sales-2026-wk-15.csv",
       "name": "2026 Week 15"
     },
     {
-      "path": "data/weekly-style-sales-2026-wk-16.xlsx",
+      "path": "data/weekly-style-sales-2026-wk-16.csv",
       "name": "2026 Week 16"
     }
   ]
@@ -102,14 +103,17 @@ Example `data/manifest.json`:
 
 The static dashboard cannot write uploads back to GitHub by itself; data file management happens through repository commits controlled by the repository owner.
 
+Only list CSV files that actually exist in the repository. If a manifest entry points to a missing file, the dashboard will stop and show the missing path so the shared dataset does not load partially by accident.
+
 ## Troubleshooting Data Files
 
-If the dashboard says `Invalid XLSX file` or says a workbook loaded as HTML, the manifest path is not returning the actual Excel file.
+If the dashboard says a CSV loaded as HTML, the manifest path is not returning the actual CSV file.
 
 Check these items:
 
-- Use a repository file path such as `data/weekly-style-sales-2026-wk-15.xlsx`.
-- Do not use a GitHub `blob` URL such as `https://github.com/user/repo/blob/main/data/file.xlsx`.
+- Use a repository file path such as `data/weekly-style-sales-2026-wk-15.csv`.
+- Do not use a GitHub `blob` URL such as `https://github.com/user/repo/blob/main/data/file.csv`.
 - File paths are case-sensitive on GitHub Pages.
-- Make sure the workbook is committed to the repository and GitHub Pages has redeployed.
-- If the file is stored with Git LFS, GitHub Pages may serve a small pointer text file instead of the workbook. In that case, store the actual `.xlsx` file in the repo without LFS or use a raw downloadable file URL that returns the real workbook bytes.
+- Make sure the CSV file is committed to the repository and GitHub Pages has redeployed.
+- Do not rename an Excel workbook to `.csv`; export the sales sheet to CSV from Excel or another spreadsheet tool.
+- If the file is stored with Git LFS, GitHub Pages may serve a small pointer text file instead of the CSV. In that case, store the actual `.csv` file in the repo without LFS or use a raw downloadable file URL that returns the real CSV text.

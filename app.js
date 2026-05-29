@@ -178,7 +178,7 @@ async function refreshRepositoryData({ preserveDates } = { preserveDates: true }
     renderAll();
 
     if (!state.files.length) {
-      setStatus("Ready. Add Excel files to data/manifest.json to populate the shared dashboard.");
+      setStatus("Ready. Add CSV files to data/manifest.json to populate the shared dashboard.");
     } else {
       setStatus(`Ready. Loaded ${numberFormat.format(state.records.length)} shared rows from ${numberFormat.format(state.files.length)} repository file${state.files.length === 1 ? "" : "s"}.`);
     }
@@ -204,10 +204,9 @@ async function loadRepositoryData() {
       throw new Error(`Could not load ${file.path} (${response.status}). Check data/manifest.json and the file path.`);
     }
 
-    const buffer = await response.arrayBuffer();
-    validateWorkbookResponse(buffer, file, response);
     const sourceHash = `repo:${file.path}`;
-    const parsed = await parseSalesWorkbook(buffer, file.name, sourceHash, (message) => setStatus(message, "busy"));
+    const buffer = await response.arrayBuffer();
+    const parsed = await parseRepositoryFile(buffer, file, response, sourceHash, (message) => setStatus(message, "busy"));
     const addedRecords = [];
     let rowsAdded = 0;
     let rowsSkipped = 0;
@@ -281,9 +280,150 @@ function fileNameFromPath(path) {
   return decodeURIComponent(text.split("/").pop() || text || "Data file");
 }
 
+async function parseRepositoryFile(buffer, file, response, sourceHash, onProgress) {
+  if (isCsvFile(file, response)) {
+    const bytes = new Uint8Array(buffer);
+    if (isZipBytes(bytes)) {
+      throw new Error(`${file.name} is an Excel workbook, but data/manifest.json points to it as a CSV file. Export the sales sheet as .csv and update the manifest path.`);
+    }
+    if (isOldExcelBytes(bytes)) {
+      throw new Error(`${file.name} is an old binary Excel file. Export the sales sheet as .csv and update data/manifest.json.`);
+    }
+    return parseSalesCsv(decodeCsvBuffer(buffer), file.name, sourceHash, onProgress);
+  }
+
+  validateWorkbookResponse(buffer, file, response);
+  return parseSalesWorkbook(buffer, file, sourceHash, onProgress);
+}
+
+function isCsvFile(file, response) {
+  const path = cleanText(file?.path).split("?")[0].toLowerCase();
+  const contentType = (response.headers.get("content-type") || "").toLowerCase();
+  const hasWorkbookExtension = /\.(xlsx|xlsm|xls)$/i.test(path);
+  return path.endsWith(".csv") || contentType.includes("text/csv") || contentType.includes("application/csv") || (contentType.includes("text/plain") && !hasWorkbookExtension);
+}
+
+function decodeCsvBuffer(buffer) {
+  return new TextDecoder("utf-8").decode(buffer).replace(/^\uFEFF/, "");
+}
+
+async function parseSalesCsv(text, fileName, sourceHash, onProgress) {
+  onProgress(`Opening ${fileName}...`);
+  validateCsvText(text, fileName);
+
+  onProgress(`Parsing CSV rows in ${fileName}...`);
+  const rows = parseCsvRows(text);
+  const headerIndex = rows.findIndex((row) => row.some((cell) => cleanText(cell)));
+  if (headerIndex < 0) {
+    throw new Error(`${fileName} is empty. Export the sales sheet as a CSV file with headers.`);
+  }
+
+  const headers = rows[headerIndex].slice();
+  headers[0] = toText(headers[0]).replace(/^\uFEFF/, "");
+  const fieldIndex = {};
+  const records = [];
+  let minDate = "";
+  let maxDate = "";
+
+  mapHeaders(headers, fieldIndex);
+  validateRequiredHeaders(fieldIndex);
+
+  for (let index = headerIndex + 1; index < rows.length; index += 1) {
+    const cells = rows[index];
+    if (!cells.some((cell) => cleanText(cell))) continue;
+
+    const record = normalizeRecord(cells, fieldIndex, fileName, sourceHash, index + 1);
+    if (record) {
+      records.push(record);
+      if (!minDate || record.dateKey < minDate) minDate = record.dateKey;
+      if (!maxDate || record.dateKey > maxDate) maxDate = record.dateKey;
+    }
+
+    if ((index - headerIndex) % 2500 === 0) {
+      onProgress(`Parsed ${numberFormat.format(index - headerIndex)} rows from ${fileName}...`);
+      await pause();
+    }
+  }
+
+  if (!records.length) {
+    throw new Error(`${fileName} did not contain usable CSV rows.`);
+  }
+
+  return { records, minDate, maxDate };
+}
+
+function validateCsvText(text, fileName) {
+  const preview = text.slice(0, 500).trim();
+  const lowerPreview = preview.toLowerCase();
+
+  if (lowerPreview.startsWith("version https://git-lfs.github.com/spec/v1")) {
+    throw new Error(`${fileName} is a Git LFS pointer, not the actual CSV file. Store the real .csv file in the repo/Pages deployment, or use a raw downloadable file URL in data/manifest.json.`);
+  }
+
+  if (lowerPreview.startsWith("<!doctype html") || lowerPreview.startsWith("<html") || lowerPreview.includes("<title>")) {
+    throw new Error(`${fileName} loaded as HTML instead of a CSV file. In data/manifest.json, use a Pages-relative file path like "data/file.csv" or a raw download URL, not a GitHub "blob" page URL.`);
+  }
+
+  if (/^(404|not found)\b/.test(lowerPreview)) {
+    throw new Error(`${fileName} was not found. Check the file path, capitalization, and GitHub Pages deployment.`);
+  }
+}
+
+function parseCsvRows(text) {
+  const rows = [];
+  let row = [];
+  let value = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (inQuotes) {
+      if (char === "\"") {
+        if (text[index + 1] === "\"") {
+          value += "\"";
+          index += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        value += char;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inQuotes = true;
+    } else if (char === ",") {
+      row.push(value);
+      value = "";
+    } else if (char === "\n") {
+      row.push(value);
+      rows.push(row);
+      row = [];
+      value = "";
+    } else if (char === "\r") {
+      row.push(value);
+      rows.push(row);
+      row = [];
+      value = "";
+      if (text[index + 1] === "\n") index += 1;
+    } else {
+      value += char;
+    }
+  }
+
+  if (value || row.length || text.endsWith(",")) {
+    row.push(value);
+    rows.push(row);
+  }
+
+  return rows;
+}
+
 function validateWorkbookResponse(buffer, file, response) {
   const bytes = new Uint8Array(buffer);
-  if (bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b) return;
+  if (isZipBytes(bytes)) return;
 
   const preview = new TextDecoder("utf-8").decode(bytes.slice(0, 500)).trim();
   const lowerPreview = preview.toLowerCase();
@@ -296,36 +436,69 @@ function validateWorkbookResponse(buffer, file, response) {
     throw new Error(`${file.name} is a Git LFS pointer, not the actual Excel file. Store the real .xlsx in the repo/Pages deployment, or use a raw downloadable file URL in data/manifest.json.`);
   }
 
-  if (bytes.length >= 8 && bytes[0] === 0xD0 && bytes[1] === 0xCF && bytes[2] === 0x11 && bytes[3] === 0xE0) {
-    throw new Error(`${file.name} is an old binary .xls workbook or a file saved in the wrong Excel format. Re-save it as a real .xlsx workbook and update data/manifest.json if the filename changes.`);
+  if (isOldExcelBytes(bytes)) {
+    throw new Error(`${file.name} is an old binary .xls workbook or a file saved in the wrong Excel format. Export the sales sheet as .csv and update data/manifest.json if the filename changes.`);
   }
 
   if (lowerPreview.startsWith("<!doctype html") || lowerPreview.startsWith("<html") || lowerPreview.includes("<title>")) {
-    throw new Error(`${file.name} loaded as HTML instead of an Excel workbook. In data/manifest.json, use a Pages-relative file path like "data/file.xlsx" or a raw download URL, not a GitHub "blob" page URL.`);
+    throw new Error(`${file.name} loaded as HTML instead of a data file. In data/manifest.json, use a Pages-relative file path like "data/file.csv" or a raw download URL, not a GitHub "blob" page URL.`);
   }
 
-  if (lowerPreview.includes("404") || lowerPreview.includes("not found")) {
+  if (/^(404|not found)\b/.test(lowerPreview)) {
     throw new Error(`${file.name} was not found at ${file.path}. Check the file path, capitalization, and GitHub Pages deployment.`);
   }
 
-  throw new Error(`${file.name} did not load as a valid .xlsx file. Expected ZIP bytes starting with PK, got ${contentType}; first bytes: ${firstBytes || "empty file"}. Check that the committed file is a real .xlsx workbook, not a renamed .xls/csv/html file or Git LFS pointer.`);
+  throw new Error(`${file.name} did not load as a valid data file. Expected a .csv file or ZIP-based .xlsx bytes starting with PK, got ${contentType}; first bytes: ${firstBytes || "empty file"}. Check that the manifest path points to the real file, not a renamed .xls/html file or Git LFS pointer.`);
 }
 
-async function parseSalesWorkbook(buffer, fileName, sourceHash, onProgress) {
+function isZipBytes(bytes) {
+  return bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b;
+}
+
+function isOldExcelBytes(bytes) {
+  return bytes.length >= 8 && bytes[0] === 0xD0 && bytes[1] === 0xCF && bytes[2] === 0x11 && bytes[3] === 0xE0;
+}
+
+async function parseSalesWorkbook(buffer, file, sourceHash, onProgress) {
+  const fileName = file.name;
   onProgress(`Opening ${fileName}...`);
   const zip = new ZipArchive(buffer);
   const sharedStrings = await readSharedStrings(zip);
-  const sheetPath = await findSheetPath(zip, "Detail");
+  const sheet = await findSheetPath(zip, workbookSheetCandidates(file));
 
-  onProgress(`Parsing Detail tab in ${fileName}...`);
-  const sheetXml = await zip.text(sheetPath);
-  const parsed = await parseDetailSheet(sheetXml, sharedStrings, fileName, sourceHash, onProgress);
+  onProgress(`Parsing ${sheet.name} sheet in ${fileName}...`);
+  const sheetXml = await zip.text(sheet.path);
+  const parsed = await parseSalesSheet(sheetXml, sharedStrings, fileName, sourceHash, onProgress);
 
   if (!parsed.records.length) {
-    throw new Error(`${fileName} did not contain usable rows on the Detail tab.`);
+    throw new Error(`${fileName} did not contain usable rows on the ${sheet.name} sheet.`);
   }
 
   return parsed;
+}
+
+function workbookSheetCandidates(file) {
+  return uniqueCleanTexts([
+    stripExtension(fileNameFromPath(file.path)),
+    stripExtension(file.name),
+    "Detail"
+  ]);
+}
+
+function stripExtension(value) {
+  return cleanText(value).replace(/\.[^.]+$/, "");
+}
+
+function uniqueCleanTexts(values) {
+  const seen = new Set();
+  return values
+    .map(cleanText)
+    .filter((value) => {
+      const key = value.toLowerCase();
+      if (!value || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 }
 
 async function readSharedStrings(zip) {
@@ -338,14 +511,16 @@ async function readSharedStrings(zip) {
   });
 }
 
-async function findSheetPath(zip, sheetName) {
+async function findSheetPath(zip, sheetNames) {
   const workbook = await zip.text("xl/workbook.xml");
   const sheets = Array.from(workbook.matchAll(/<sheet\b([^>]*)\/?>/g)).map((match) => match[1]);
-  const sheet = sheets.find((attributes) => cleanText(getXmlAttribute(attributes, "name")).toLowerCase() === sheetName.toLowerCase());
+  const normalizedNames = sheetNames.map((name) => name.toLowerCase());
+  const sheet = sheets.find((attributes) => normalizedNames.includes(cleanText(getXmlAttribute(attributes, "name")).toLowerCase()));
   if (!sheet) {
-    throw new Error(`Workbook is missing a "${sheetName}" sheet.`);
+    throw new Error(`Workbook is missing a supported sales sheet. Expected one of: ${sheetNames.join(", ")}.`);
   }
 
+  const sheetName = cleanText(getXmlAttribute(sheet, "name"));
   const relationshipId = getXmlAttribute(sheet, "r:id") || getXmlAttribute(sheet, "id");
   const rels = await zip.text("xl/_rels/workbook.xml.rels");
   const relationships = Array.from(rels.matchAll(/<Relationship\b([^>]*)\/?>/g)).map((match) => match[1]);
@@ -354,13 +529,16 @@ async function findSheetPath(zip, sheetName) {
     throw new Error(`Workbook relationship for "${sheetName}" could not be found.`);
   }
 
-  return normalizeZipPath("xl/workbook.xml", getXmlAttribute(relationship, "Target"));
+  return {
+    name: sheetName,
+    path: normalizeZipPath("xl/workbook.xml", getXmlAttribute(relationship, "Target"))
+  };
 }
 
-async function parseDetailSheet(sheetXml, sharedStrings, fileName, sourceHash, onProgress) {
+async function parseSalesSheet(sheetXml, sharedStrings, fileName, sourceHash, onProgress) {
   const sheetDataMatch = sheetXml.match(/<sheetData\b[^>]*>([\s\S]*?)<\/sheetData>/);
   if (!sheetDataMatch) {
-    throw new Error("Detail sheet has no sheetData section.");
+    throw new Error("Sales sheet has no sheetData section.");
   }
 
   const fieldIndex = {};
@@ -451,7 +629,7 @@ function validateRequiredHeaders(fieldIndex) {
     .map((key) => FIELD_DEFS.find((field) => field.key === key)?.label || key);
 
   if (missing.length) {
-    throw new Error(`Detail tab is missing required columns: ${missing.join(", ")}.`);
+    throw new Error(`Data file is missing required columns: ${missing.join(", ")}.`);
   }
 }
 
