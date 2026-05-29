@@ -205,6 +205,7 @@ async function loadRepositoryData() {
     }
 
     const buffer = await response.arrayBuffer();
+    validateWorkbookResponse(buffer, file, response);
     const sourceHash = `repo:${file.path}`;
     const parsed = await parseSalesWorkbook(buffer, file.name, sourceHash, (message) => setStatus(message, "busy"));
     const addedRecords = [];
@@ -278,6 +279,29 @@ function withCacheBust(path) {
 function fileNameFromPath(path) {
   const text = cleanText(path);
   return decodeURIComponent(text.split("/").pop() || text || "Data file");
+}
+
+function validateWorkbookResponse(buffer, file, response) {
+  const bytes = new Uint8Array(buffer);
+  if (bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b) return;
+
+  const preview = new TextDecoder("utf-8").decode(bytes.slice(0, 500)).trim();
+  const lowerPreview = preview.toLowerCase();
+  const contentType = response.headers.get("content-type") || "unknown content type";
+
+  if (lowerPreview.startsWith("version https://git-lfs.github.com/spec/v1")) {
+    throw new Error(`${file.name} is a Git LFS pointer, not the actual Excel file. Store the real .xlsx in the repo/Pages deployment, or use a raw downloadable file URL in data/manifest.json.`);
+  }
+
+  if (lowerPreview.startsWith("<!doctype html") || lowerPreview.startsWith("<html") || lowerPreview.includes("<title>")) {
+    throw new Error(`${file.name} loaded as HTML instead of an Excel workbook. In data/manifest.json, use a Pages-relative file path like "data/file.xlsx" or a raw download URL, not a GitHub "blob" page URL.`);
+  }
+
+  if (lowerPreview.includes("404") || lowerPreview.includes("not found")) {
+    throw new Error(`${file.name} was not found at ${file.path}. Check the file path, capitalization, and GitHub Pages deployment.`);
+  }
+
+  throw new Error(`${file.name} did not load as a valid .xlsx file. Expected ZIP bytes starting with PK, got ${contentType}. Check data/manifest.json and confirm the path downloads the actual workbook.`);
 }
 
 async function parseSalesWorkbook(buffer, fileName, sourceHash, onProgress) {
