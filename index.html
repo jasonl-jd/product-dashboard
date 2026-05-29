@@ -19,12 +19,7 @@
         <span id="record-count">0 rows</span>
       </div>
       <div class="topbar-actions">
-        <input id="file-input" class="visually-hidden" type="file" accept=".xlsx,.xlsm" multiple>
-        <label class="button primary" for="file-input">Upload</label>
-        <input id="json-input" class="visually-hidden" type="file" accept=".json">
-        <label class="button" for="json-input">Import Data</label>
-        <button id="export-json" class="button" type="button">Export Data</button>
-        <button id="reset-data" class="button danger" type="button">Reset</button>
+        <button id="refresh-data" class="button primary" type="button">Refresh Data</button>
       </div>
     </header>
 
@@ -145,8 +140,8 @@
           <article class="panel file-panel">
             <div class="panel-head">
               <div>
-                <span class="panel-kicker">Source Files</span>
-                <h2>Imports</h2>
+                <span class="panel-kicker">Repository Files</span>
+                <h2>Shared Data</h2>
               </div>
             </div>
             <div class="table-scroll tight">
@@ -156,7 +151,7 @@
                     <th>File</th>
                     <th>Rows</th>
                     <th>Dates</th>
-                    <th></th>
+                    <th>Source</th>
                   </tr>
                 </thead>
                 <tbody id="file-tbody"></tbody>

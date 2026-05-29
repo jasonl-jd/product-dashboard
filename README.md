@@ -4,11 +4,11 @@ A static product performance dashboard for weekly sales workbooks with a `Detail
 
 ## What It Does
 
-- Upload one or more `.xlsx` or `.xlsm` sales files.
+- Loads shared `.xlsx` or `.xlsm` sales files listed in `data/manifest.json`.
 - Uses a black workspace with a yellow `#ffdd00` primary accent.
 - References Gotham Ultra for primary headings and Gotham Bold for secondary UI text when those fonts are installed locally.
-- Reads the `Detail` worksheet and appends new rows to saved browser data.
-- De-duplicates repeat uploads by file hash and row key.
+- Reads each workbook's `Detail` worksheet directly from the GitHub repository.
+- De-duplicates repeated rows by row key across repository files.
 - Filters and pivots by:
   - Shipping Province
   - Region
@@ -26,7 +26,6 @@ A static product performance dashboard for weekly sales workbooks with a `Detail
 - Shows the top 20 products by region, sortable by net sales or net units sold.
 - Shows a full product-results panel with net sales, net units sold, and percent of sales for the current result set.
 - Exports the current pivot table to CSV.
-- Exports and imports the saved dashboard dataset as JSON.
 
 ## Expected Workbook Shape
 
@@ -60,7 +59,7 @@ http://localhost:8080
 ## GitHub Pages
 
 1. Create a new GitHub repository.
-2. Upload `index.html`, `styles.css`, `app.js`, `.nojekyll`, and this `README.md`.
+2. Upload `index.html`, `styles.css`, `app.js`, `.nojekyll`, the `data/` folder, and this `README.md`.
 3. In GitHub, go to `Settings` > `Pages`.
 4. Set the source to your main branch and root folder.
 5. Open the published Pages URL.
@@ -71,10 +70,34 @@ Use the GitHub Pages URL, not the normal GitHub repository file preview. The Pag
 https://your-username.github.io/your-repo-name/
 ```
 
-If the page says `App loading...` and never changes to `Ready`, `app.js` is not being served or was not uploaded. If an upload fails, the status bar at the top of the dashboard will show the import error.
+If the page says `App loading...` and never changes to `Ready`, `app.js` is not being served or was not uploaded. If repository data fails to load, the status bar at the top of the dashboard will show the error.
 
 ## Data Storage
 
-Uploaded sales rows are saved in the browser's IndexedDB storage for that GitHub Pages URL. To move the saved dataset to another browser or computer, use `Export Data`, then `Import Data` on the other browser.
+Dashboard data is centralized in the GitHub repository. The app loads only the files listed in `data/manifest.json`, so every user who opens the same GitHub Pages URL sees the same dataset.
 
-The app does not send workbook data to a server. For a shared multi-user database or automatic server-side imports from a repository folder, add a backend or GitHub Action workflow later.
+To add or refresh data:
+
+1. Add the Excel workbook to the `data/` folder.
+2. Add an entry for the workbook in `data/manifest.json`.
+3. Commit and push the changes to GitHub.
+4. Wait for GitHub Pages to redeploy, then use `Refresh Data` in the dashboard.
+
+Example `data/manifest.json`:
+
+```json
+{
+  "files": [
+    {
+      "path": "data/weekly-style-sales-2026-wk-15.xlsx",
+      "name": "2026 Week 15"
+    },
+    {
+      "path": "data/weekly-style-sales-2026-wk-16.xlsx",
+      "name": "2026 Week 16"
+    }
+  ]
+}
+```
+
+The static dashboard cannot write uploads back to GitHub by itself; data file management happens through repository commits controlled by the repository owner.

@@ -4,8 +4,7 @@ window.__PRODUCT_DASHBOARD_APP_LOADED__ = true;
 window.addEventListener("error", (event) => reportGlobalError(event.error || event.message));
 window.addEventListener("unhandledrejection", (event) => reportGlobalError(event.reason));
 
-const DB_NAME = "product-performance-dashboard";
-const DB_VERSION = 1;
+const DATA_MANIFEST_URL = "data/manifest.json";
 const BLANK = "(blank)";
 const MAX_FILTER_OPTIONS = 180;
 
@@ -56,7 +55,6 @@ const SORTERS = {
 };
 
 const state = {
-  db: null,
   records: [],
   files: [],
   rowKeys: new Set(),
@@ -82,32 +80,18 @@ async function init() {
   collectDom();
   populateDimensionSelect();
   bindEvents();
-  setStatus("Loading saved data...");
-
-  try {
-    state.db = await openDatabase();
-    await loadPersistedData();
-    ensureDateDefaults();
-    renderAll();
-    setStatus("Ready");
-  } catch (error) {
-    console.error(error);
-    setStatus(error.message || "Unable to load dashboard storage.", "error");
-  }
+  await refreshRepositoryData({ preserveDates: false });
 }
 
 function collectDom() {
   Object.assign(dom, {
-    fileInput: document.querySelector("#file-input"),
-    jsonInput: document.querySelector("#json-input"),
-    exportJson: document.querySelector("#export-json"),
-    resetData: document.querySelector("#reset-data"),
     currentStart: document.querySelector("#current-start"),
     currentEnd: document.querySelector("#current-end"),
     compareStart: document.querySelector("#compare-start"),
     compareEnd: document.querySelector("#compare-end"),
     allDates: document.querySelector("#all-dates"),
     previousPeriod: document.querySelector("#previous-period"),
+    refreshData: document.querySelector("#refresh-data"),
     dimensionSelect: document.querySelector("#dimension-select"),
     sortSelect: document.querySelector("#sort-select"),
     sortDir: document.querySelector("#sort-dir"),
@@ -140,10 +124,7 @@ function collectDom() {
 }
 
 function bindEvents() {
-  dom.fileInput.addEventListener("change", handleWorkbookUpload);
-  dom.jsonInput.addEventListener("change", handleJsonImport);
-  dom.exportJson.addEventListener("click", exportDatasetJson);
-  dom.resetData.addEventListener("click", resetDataset);
+  dom.refreshData?.addEventListener("click", () => refreshRepositoryData({ preserveDates: true }));
   dom.allDates.addEventListener("click", setAllDates);
   dom.previousPeriod.addEventListener("click", setPreviousPeriod);
   dom.dimensionSelect.addEventListener("change", renderAll);
@@ -178,11 +159,6 @@ function bindEvents() {
     renderAll();
   });
 
-  dom.fileTbody.addEventListener("click", async (event) => {
-    const button = event.target.closest("[data-delete-file]");
-    if (!button) return;
-    await deleteImportedFile(button.dataset.deleteFile);
-  });
 }
 
 function populateDimensionSelect() {
@@ -191,106 +167,117 @@ function populateDimensionSelect() {
     .join("");
 }
 
-async function handleWorkbookUpload(event) {
-  const files = Array.from(event.target.files || []);
-  event.target.value = "";
-  if (!files.length || state.loading) return;
-
+async function refreshRepositoryData({ preserveDates } = { preserveDates: true }) {
+  if (state.loading) return;
   state.loading = true;
-  setStatus(`Importing ${files.length} file${files.length === 1 ? "" : "s"}...`, "busy");
+  setStatus("Loading repository data...", "busy");
 
-  const results = [];
   try {
-    for (const file of files) {
-      const result = await importWorkbookFile(file);
-      results.push(result);
-    }
-
-    await loadPersistedData();
-    ensureDateDefaults(!state.dateTouched);
+    await loadRepositoryData();
+    ensureDateDefaults(!preserveDates || !state.dateTouched);
     renderAll();
 
-    const added = results.reduce((sum, result) => sum + result.rowsAdded, 0);
-    const duplicates = results.reduce((sum, result) => sum + result.rowsSkipped, 0);
-    const skippedFiles = results.filter((result) => result.skippedFile).length;
-    const fileNote = skippedFiles ? `, ${skippedFiles} duplicate file${skippedFiles === 1 ? "" : "s"} skipped` : "";
-    setStatus(`${numberFormat.format(added)} rows added, ${numberFormat.format(duplicates)} duplicate rows skipped${fileNote}.`);
+    if (!state.files.length) {
+      setStatus("Ready. Add Excel files to data/manifest.json to populate the shared dashboard.");
+    } else {
+      setStatus(`Ready. Loaded ${numberFormat.format(state.records.length)} shared rows from ${numberFormat.format(state.files.length)} repository file${state.files.length === 1 ? "" : "s"}.`);
+    }
   } catch (error) {
     console.error(error);
-    setStatus(error.message || "Import failed.", "error");
+    setStatus(error.message || "Unable to load repository data.", "error");
   } finally {
     state.loading = false;
   }
 }
 
-async function importWorkbookFile(file) {
-  if (!/\.xls[xm]$/i.test(file.name)) {
-    throw new Error(`${file.name} is not an .xlsx or .xlsm workbook.`);
-  }
+async function loadRepositoryData() {
+  const manifest = await fetchRepositoryManifest();
+  const files = normalizeManifestFiles(manifest);
+  const records = [];
+  const fileMetas = [];
+  const rowKeys = new Set();
 
-  setStatus(`Reading ${file.name}...`, "busy");
-  const buffer = await file.arrayBuffer();
-  const hash = await sha256(buffer);
-  const existingFile = state.files.find((savedFile) => savedFile.hash === hash);
-  const shouldRefreshExisting = existingFile && sourceNeedsRefresh(hash);
-
-  if (existingFile && !shouldRefreshExisting) {
-    return {
-      name: file.name,
-      hash,
-      rowsRead: 0,
-      rowsAdded: 0,
-      rowsSkipped: 0,
-      skippedFile: true
-    };
-  }
-
-  const parsed = await parseSalesWorkbook(buffer, file.name, hash, (message) => setStatus(message, "busy"));
-
-  if (shouldRefreshExisting) {
-    await purgeSourceHash(hash);
-  }
-
-  const uniqueRecords = [];
-  let rowsSkipped = 0;
-
-  for (const record of parsed.records) {
-    if (state.rowKeys.has(record.rowKey)) {
-      rowsSkipped += 1;
-      continue;
+  for (const file of files) {
+    setStatus(`Loading ${file.name}...`, "busy");
+    const response = await fetch(withCacheBust(file.path), { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`Could not load ${file.path} (${response.status}). Check data/manifest.json and the file path.`);
     }
-    state.rowKeys.add(record.rowKey);
-    uniqueRecords.push(record);
+
+    const buffer = await response.arrayBuffer();
+    const sourceHash = `repo:${file.path}`;
+    const parsed = await parseSalesWorkbook(buffer, file.name, sourceHash, (message) => setStatus(message, "busy"));
+    const addedRecords = [];
+    let rowsAdded = 0;
+    let rowsSkipped = 0;
+
+    for (const record of parsed.records.map(hydrateRecord)) {
+      if (rowKeys.has(record.rowKey)) {
+        rowsSkipped += 1;
+        continue;
+      }
+      rowKeys.add(record.rowKey);
+      records.push(record);
+      addedRecords.push(record);
+      rowsAdded += 1;
+    }
+
+    fileMetas.push({
+      hash: sourceHash,
+      name: file.name,
+      path: file.path,
+      source: "Repository",
+      rowsRead: parsed.records.length,
+      rowsAdded,
+      rowsSkipped,
+      minDate: parsed.minDate,
+      maxDate: parsed.maxDate,
+      netSales: sum(addedRecords, "netSales"),
+      netUnits: sum(addedRecords, "netUnits")
+    });
   }
 
-  const fileMeta = {
-    hash,
-    name: file.name,
-    size: file.size,
-    importedAt: new Date().toISOString(),
-    rowsRead: parsed.records.length,
-    rowsAdded: uniqueRecords.length,
-    rowsSkipped,
-    minDate: parsed.minDate,
-    maxDate: parsed.maxDate,
-    netSales: sum(uniqueRecords, "netSales"),
-    netUnits: sum(uniqueRecords, "netUnits")
-  };
-
-  await saveImport(uniqueRecords, fileMeta);
-
-  return {
-    name: file.name,
-    hash,
-    rowsRead: parsed.records.length,
-    rowsAdded: uniqueRecords.length,
-    rowsSkipped,
-    skippedFile: false
-  };
+  state.records = records;
+  state.files = fileMetas;
+  state.rowKeys = rowKeys;
 }
 
-function sourceNeedsRefresh(hash) {
-  return state.records.some((record) => record.sourceHash === hash && !Object.prototype.hasOwnProperty.call(record, "color"));
+async function fetchRepositoryManifest() {
+  const response = await fetch(withCacheBust(DATA_MANIFEST_URL), { cache: "no-store" });
+  if (response.status === 404) {
+    return { files: [] };
+  }
+  if (!response.ok) {
+    throw new Error(`Could not load ${DATA_MANIFEST_URL} (${response.status}).`);
+  }
+  return response.json();
+}
+
+function normalizeManifestFiles(manifest) {
+  const files = Array.isArray(manifest.files) ? manifest.files : [];
+  return files
+    .map((entry) => {
+      if (typeof entry === "string") {
+        return { path: entry, name: fileNameFromPath(entry), enabled: true };
+      }
+      return {
+        path: cleanText(entry?.path),
+        name: cleanText(entry?.name) || fileNameFromPath(entry?.path),
+        enabled: entry?.enabled !== false
+      };
+    })
+    .filter((entry) => entry.enabled && entry.path);
+}
+
+function withCacheBust(path) {
+  const url = new URL(path, window.location.href);
+  url.searchParams.set("v", Date.now().toString());
+  return url.toString();
+}
+
+function fileNameFromPath(path) {
+  const text = cleanText(path);
+  return decodeURIComponent(text.split("/").pop() || text || "Data file");
 }
 
 async function parseSalesWorkbook(buffer, fileName, sourceHash, onProgress) {
@@ -721,19 +708,19 @@ function renderChart(rows) {
 
 function renderFiles() {
   if (!state.files.length) {
-    dom.fileTbody.innerHTML = `<tr><td colspan="4">No imports</td></tr>`;
+    dom.fileTbody.innerHTML = `<tr><td colspan="4">No repository files listed</td></tr>`;
     return;
   }
 
   dom.fileTbody.innerHTML = state.files
     .slice()
-    .sort((a, b) => String(b.importedAt).localeCompare(String(a.importedAt)))
+    .sort((a, b) => collator.compare(a.name, b.name))
     .map((file) => `
       <tr>
         <td><div class="clip" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</div></td>
         <td class="numeric">${numberFormat.format(file.rowsAdded || 0)}</td>
         <td>${escapeHtml(compactDateRange(file.minDate, file.maxDate))}</td>
-        <td><button class="row-action" data-delete-file="${escapeHtml(file.hash)}" type="button">Remove</button></td>
+        <td><div class="clip" title="${escapeHtml(file.path || file.source || "")}">${escapeHtml(file.source || "Repository")}</div></td>
       </tr>
     `).join("");
 }
@@ -973,45 +960,6 @@ function getRowLimit() {
   return dom.rowLimit.value === "all" ? Infinity : Number(dom.rowLimit.value);
 }
 
-async function handleJsonImport(event) {
-  const file = event.target.files && event.target.files[0];
-  event.target.value = "";
-  if (!file) return;
-
-  try {
-    setStatus(`Importing ${file.name}...`, "busy");
-    const payload = JSON.parse(await file.text());
-    const records = Array.isArray(payload.records) ? payload.records : [];
-    const files = Array.isArray(payload.files) ? payload.files : [];
-    const uniqueRecords = [];
-
-    for (const record of records) {
-      if (!record.rowKey || state.rowKeys.has(record.rowKey)) continue;
-      state.rowKeys.add(record.rowKey);
-      uniqueRecords.push(record);
-    }
-
-    await saveRecordsAndFiles(uniqueRecords, files);
-    await loadPersistedData();
-    ensureDateDefaults(!state.dateTouched);
-    renderAll();
-    setStatus(`${numberFormat.format(uniqueRecords.length)} rows imported from data file.`);
-  } catch (error) {
-    console.error(error);
-    setStatus(error.message || "Data import failed.", "error");
-  }
-}
-
-function exportDatasetJson() {
-  const payload = {
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    records: state.records,
-    files: state.files
-  };
-  downloadFile(`product-performance-data-${todayKey()}.json`, JSON.stringify(payload), "application/json");
-}
-
 function exportPivotCsv() {
   const dimension = getActiveDimension();
   const rows = state.pivotRows;
@@ -1030,119 +978,6 @@ function exportPivotCsv() {
     ])
   ];
   downloadFile(`pivot-${dimension.key}-${todayKey()}.csv`, lines.map(csvLine).join("\n"), "text/csv");
-}
-
-async function resetDataset() {
-  if (!state.records.length && !state.files.length) return;
-  const confirmed = window.confirm("Reset all saved dashboard data?");
-  if (!confirmed) return;
-
-  const transaction = state.db.transaction(["records", "files"], "readwrite");
-  transaction.objectStore("records").clear();
-  transaction.objectStore("files").clear();
-  await transactionDone(transaction);
-
-  state.records = [];
-  state.files = [];
-  state.rowKeys = new Set();
-  for (const dimension of DIMENSIONS) state.filters[dimension.key].clear();
-  renderAll();
-  setStatus("Saved data reset.");
-}
-
-async function deleteImportedFile(hash) {
-  const file = state.files.find((item) => item.hash === hash);
-  if (!file) return;
-  const confirmed = window.confirm(`Remove ${file.name}?`);
-  if (!confirmed) return;
-
-  await purgeSourceHash(hash);
-  await loadPersistedData();
-  ensureDateDefaults(!state.dateTouched);
-  renderAll();
-  setStatus(`${file.name} removed.`);
-}
-
-async function purgeSourceHash(hash) {
-  const transaction = state.db.transaction(["records", "files"], "readwrite");
-  const recordStore = transaction.objectStore("records");
-  const index = recordStore.index("sourceHash");
-  const request = index.openCursor(IDBKeyRange.only(hash));
-  request.onsuccess = () => {
-    const cursor = request.result;
-    if (!cursor) return;
-    cursor.delete();
-    cursor.continue();
-  };
-  request.onerror = () => transaction.abort();
-  transaction.objectStore("files").delete(hash);
-  await transactionDone(transaction);
-
-  state.records = state.records.filter((record) => record.sourceHash !== hash);
-  state.files = state.files.filter((file) => file.hash !== hash);
-  state.rowKeys = new Set(state.records.map((record) => record.rowKey));
-}
-
-function openDatabase() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains("records")) {
-        const records = db.createObjectStore("records", { keyPath: "rowKey" });
-        records.createIndex("sourceHash", "sourceHash", { unique: false });
-        records.createIndex("dateKey", "dateKey", { unique: false });
-      }
-      if (!db.objectStoreNames.contains("files")) {
-        db.createObjectStore("files", { keyPath: "hash" });
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-async function loadPersistedData() {
-  const [records, files] = await Promise.all([
-    getAllFromStore("records"),
-    getAllFromStore("files")
-  ]);
-  state.records = records.map(hydrateRecord);
-  state.files = files;
-  state.rowKeys = new Set(state.records.map((record) => record.rowKey));
-}
-
-function getAllFromStore(storeName) {
-  return new Promise((resolve, reject) => {
-    const request = state.db.transaction(storeName, "readonly").objectStore(storeName).getAll();
-    request.onsuccess = () => resolve(request.result || []);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-async function saveImport(records, fileMeta) {
-  const transaction = state.db.transaction(["records", "files"], "readwrite");
-  const recordStore = transaction.objectStore("records");
-  for (const record of records) recordStore.put(record);
-  transaction.objectStore("files").put(fileMeta);
-  await transactionDone(transaction);
-}
-
-async function saveRecordsAndFiles(records, files) {
-  const transaction = state.db.transaction(["records", "files"], "readwrite");
-  const recordStore = transaction.objectStore("records");
-  const fileStore = transaction.objectStore("files");
-  for (const record of records) recordStore.put(hydrateRecord(record));
-  for (const file of files) fileStore.put(file);
-  await transactionDone(transaction);
-}
-
-function transactionDone(transaction) {
-  return new Promise((resolve, reject) => {
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
-    transaction.onabort = () => reject(transaction.error || new Error("Database transaction aborted."));
-  });
 }
 
 class ZipArchive {
@@ -1658,23 +1493,6 @@ function downloadFile(name, content, type) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
-}
-
-async function sha256(buffer) {
-  if (globalThis.crypto && crypto.subtle && globalThis.isSecureContext !== false) {
-    const digest = await crypto.subtle.digest("SHA-256", buffer);
-    return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
-  }
-
-  const bytes = new Uint8Array(buffer);
-  let hashA = 0x811c9dc5;
-  let hashB = 0x1000193;
-  for (const byte of bytes) {
-    hashA ^= byte;
-    hashA = Math.imul(hashA, 0x01000193) >>> 0;
-    hashB = (Math.imul(hashB ^ byte, 0x85ebca6b) + 0xc2b2ae35) >>> 0;
-  }
-  return `fallback-${bytes.length}-${hashA.toString(16).padStart(8, "0")}${hashB.toString(16).padStart(8, "0")}`;
 }
 
 function hashString(value) {
