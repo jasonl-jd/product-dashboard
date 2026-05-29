@@ -288,9 +288,16 @@ function validateWorkbookResponse(buffer, file, response) {
   const preview = new TextDecoder("utf-8").decode(bytes.slice(0, 500)).trim();
   const lowerPreview = preview.toLowerCase();
   const contentType = response.headers.get("content-type") || "unknown content type";
+  const firstBytes = Array.from(bytes.slice(0, 12))
+    .map((byte) => byte.toString(16).padStart(2, "0").toUpperCase())
+    .join(" ");
 
   if (lowerPreview.startsWith("version https://git-lfs.github.com/spec/v1")) {
     throw new Error(`${file.name} is a Git LFS pointer, not the actual Excel file. Store the real .xlsx in the repo/Pages deployment, or use a raw downloadable file URL in data/manifest.json.`);
+  }
+
+  if (bytes.length >= 8 && bytes[0] === 0xD0 && bytes[1] === 0xCF && bytes[2] === 0x11 && bytes[3] === 0xE0) {
+    throw new Error(`${file.name} is an old binary .xls workbook or a file saved in the wrong Excel format. Re-save it as a real .xlsx workbook and update data/manifest.json if the filename changes.`);
   }
 
   if (lowerPreview.startsWith("<!doctype html") || lowerPreview.startsWith("<html") || lowerPreview.includes("<title>")) {
@@ -301,7 +308,7 @@ function validateWorkbookResponse(buffer, file, response) {
     throw new Error(`${file.name} was not found at ${file.path}. Check the file path, capitalization, and GitHub Pages deployment.`);
   }
 
-  throw new Error(`${file.name} did not load as a valid .xlsx file. Expected ZIP bytes starting with PK, got ${contentType}. Check data/manifest.json and confirm the path downloads the actual workbook.`);
+  throw new Error(`${file.name} did not load as a valid .xlsx file. Expected ZIP bytes starting with PK, got ${contentType}; first bytes: ${firstBytes || "empty file"}. Check that the committed file is a real .xlsx workbook, not a renamed .xls/csv/html file or Git LFS pointer.`);
 }
 
 async function parseSalesWorkbook(buffer, fileName, sourceHash, onProgress) {
