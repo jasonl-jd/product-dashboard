@@ -25,6 +25,8 @@ A static product performance dashboard for weekly sales CSV exports. It can be h
 - Shows net sales, net units, percent of sales, percent of units, comparison sales, and change metrics.
 - Shows the top 20 products by region in a separate dashboard tab, sortable by net sales or net units sold.
 - Shows a right-side product-results panel with net sales, net units sold, percent of sales, sales dollar change, and sales percent change.
+- Supports sortable and filterable columns in the pivot table and product-results table.
+- Shows repository file status in a Shared Data view next to the Refresh Data button.
 - Exports the current pivot table to CSV.
 
 ## Expected CSV Shape

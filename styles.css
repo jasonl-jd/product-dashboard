@@ -173,6 +173,12 @@ button {
   color: var(--black);
 }
 
+.button.view-button.active {
+  border-color: var(--green);
+  background: var(--green);
+  color: var(--black);
+}
+
 .button.danger {
   border-color: rgba(215, 25, 32, 0.36);
   color: var(--red);
@@ -203,7 +209,8 @@ button {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
   gap: 20px;
-  max-width: 1680px;
+  width: 100%;
+  max-width: none;
   margin: 0 auto;
   padding: 20px 24px 28px;
 }
@@ -420,7 +427,7 @@ select:focus {
 
 .workspace-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.48fr);
+  grid-template-columns: minmax(0, 1fr) minmax(560px, 42vw);
   gap: 18px;
   align-items: start;
 }
@@ -520,7 +527,7 @@ select:focus {
 
 .visual-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.55fr) minmax(360px, 0.85fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
 }
 
@@ -644,6 +651,10 @@ select:focus {
   max-height: 760px;
 }
 
+.shared-data-scroll {
+  max-height: calc(100vh - 240px);
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -671,6 +682,10 @@ th {
 }
 
 th button {
+  display: inline-flex;
+  width: 100%;
+  align-items: center;
+  justify-content: flex-start;
   border: 0;
   padding: 0;
   background: transparent;
@@ -678,6 +693,22 @@ th button {
   font: inherit;
   text-transform: inherit;
   letter-spacing: inherit;
+}
+
+.filter-row th {
+  top: 34px;
+  z-index: 2;
+  padding: 6px;
+  background: var(--surface-2);
+}
+
+.filter-row .column-filter {
+  width: 100%;
+  min-height: 28px;
+  border-color: var(--line);
+  padding: 5px 7px;
+  font-size: 11px;
+  text-transform: none;
 }
 
 td {
@@ -723,13 +754,39 @@ th.numeric {
 }
 
 .product-table {
-  min-width: 760px;
+  min-width: 880px;
 }
 
 .product-table th,
 .product-table td {
   padding: 9px 10px;
   font-size: 12px;
+}
+
+.product-table th:nth-child(1),
+.product-table td:nth-child(1) {
+  min-width: 230px;
+  width: 230px;
+  max-width: 260px;
+}
+
+.product-table th:nth-child(2),
+.product-table td:nth-child(2) {
+  min-width: 86px;
+  width: 86px;
+  max-width: 110px;
+}
+
+.product-table th:nth-child(3),
+.product-table td:nth-child(3) {
+  min-width: 104px;
+  width: 104px;
+}
+
+.product-table th:nth-child(4),
+.product-table td:nth-child(4) {
+  min-width: 126px;
+  width: 126px;
 }
 
 .total-row td {

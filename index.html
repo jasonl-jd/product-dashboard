@@ -20,6 +20,7 @@
       </div>
       <div class="topbar-actions">
         <button id="refresh-data" class="button primary" type="button">Refresh Data</button>
+        <button class="button view-button" type="button" data-view-tab="files">Shared Data</button>
       </div>
     </header>
 
@@ -144,28 +145,6 @@
                   </div>
                   <div id="bar-chart" class="bar-chart"></div>
                 </article>
-
-                <article class="panel file-panel">
-                  <div class="panel-head">
-                    <div>
-                      <span class="panel-kicker">Repository Files</span>
-                      <h2>Shared Data</h2>
-                    </div>
-                  </div>
-                  <div class="table-scroll tight">
-                    <table class="file-table">
-                      <thead>
-                        <tr>
-                          <th>File</th>
-                          <th>Rows</th>
-                          <th>Dates</th>
-                          <th>Source</th>
-                        </tr>
-                      </thead>
-                      <tbody id="file-tbody"></tbody>
-                    </table>
-                  </div>
-                </article>
               </section>
 
               <section class="panel table-panel">
@@ -179,14 +158,24 @@
                   <table class="pivot-table">
                     <thead>
                       <tr>
-                        <th><button data-sort-key="value" type="button">Name</button></th>
-                        <th><button data-sort-key="netSales" type="button">Net Sales</button></th>
-                        <th><button data-sort-key="salesShare" type="button">% Sales</button></th>
-                        <th><button data-sort-key="netUnits" type="button">Net Units</button></th>
-                        <th><button data-sort-key="unitsShare" type="button">% Units</button></th>
-                        <th><button data-sort-key="compareSales" type="button">Compare Sales</button></th>
-                        <th><button data-sort-key="change" type="button">Change</button></th>
-                        <th><button data-sort-key="changePct" type="button">Change %</button></th>
+                        <th><button data-table-sort="pivot" data-sort-key="value" type="button">Name</button></th>
+                        <th><button data-table-sort="pivot" data-sort-key="netSales" type="button">Net Sales</button></th>
+                        <th><button data-table-sort="pivot" data-sort-key="salesShare" type="button">% Sales</button></th>
+                        <th><button data-table-sort="pivot" data-sort-key="netUnits" type="button">Net Units</button></th>
+                        <th><button data-table-sort="pivot" data-sort-key="unitsShare" type="button">% Units</button></th>
+                        <th><button data-table-sort="pivot" data-sort-key="compareSales" type="button">Compare Sales</button></th>
+                        <th><button data-table-sort="pivot" data-sort-key="change" type="button">Change</button></th>
+                        <th><button data-table-sort="pivot" data-sort-key="changePct" type="button">Change %</button></th>
+                      </tr>
+                      <tr class="filter-row">
+                        <th><input class="column-filter" type="search" data-column-filter="pivot" data-filter-key="value" aria-label="Filter pivot name"></th>
+                        <th><input class="column-filter" type="search" data-column-filter="pivot" data-filter-key="netSales" aria-label="Filter pivot net sales"></th>
+                        <th><input class="column-filter" type="search" data-column-filter="pivot" data-filter-key="salesShare" aria-label="Filter pivot sales percent"></th>
+                        <th><input class="column-filter" type="search" data-column-filter="pivot" data-filter-key="netUnits" aria-label="Filter pivot net units"></th>
+                        <th><input class="column-filter" type="search" data-column-filter="pivot" data-filter-key="unitsShare" aria-label="Filter pivot units percent"></th>
+                        <th><input class="column-filter" type="search" data-column-filter="pivot" data-filter-key="compareSales" aria-label="Filter pivot compare sales"></th>
+                        <th><input class="column-filter" type="search" data-column-filter="pivot" data-filter-key="change" aria-label="Filter pivot change"></th>
+                        <th><input class="column-filter" type="search" data-column-filter="pivot" data-filter-key="changePct" aria-label="Filter pivot change percent"></th>
                       </tr>
                     </thead>
                     <tbody id="pivot-tbody"></tbody>
@@ -206,13 +195,22 @@
                 <table class="product-table">
                   <thead>
                     <tr>
-                      <th>Product</th>
-                      <th>SKU</th>
-                      <th>Net Sales</th>
-                      <th>Net Units Sold</th>
-                      <th>% Sales</th>
-                      <th>Sales Change</th>
-                      <th>Change %</th>
+                      <th><button data-table-sort="product" data-sort-key="productTitle" type="button">Product</button></th>
+                      <th><button data-table-sort="product" data-sort-key="sku" type="button">SKU</button></th>
+                      <th><button data-table-sort="product" data-sort-key="netSales" type="button">Net Sales</button></th>
+                      <th><button data-table-sort="product" data-sort-key="netUnits" type="button">Net Units Sold</button></th>
+                      <th><button data-table-sort="product" data-sort-key="salesShare" type="button">% Sales</button></th>
+                      <th><button data-table-sort="product" data-sort-key="change" type="button">Sales Change</button></th>
+                      <th><button data-table-sort="product" data-sort-key="changePct" type="button">Change %</button></th>
+                    </tr>
+                    <tr class="filter-row">
+                      <th><input class="column-filter" type="search" data-column-filter="product" data-filter-key="productTitle" aria-label="Filter product"></th>
+                      <th><input class="column-filter" type="search" data-column-filter="product" data-filter-key="sku" aria-label="Filter SKU"></th>
+                      <th><input class="column-filter" type="search" data-column-filter="product" data-filter-key="netSales" aria-label="Filter product net sales"></th>
+                      <th><input class="column-filter" type="search" data-column-filter="product" data-filter-key="netUnits" aria-label="Filter product net units"></th>
+                      <th><input class="column-filter" type="search" data-column-filter="product" data-filter-key="salesShare" aria-label="Filter product sales percent"></th>
+                      <th><input class="column-filter" type="search" data-column-filter="product" data-filter-key="change" aria-label="Filter product sales change"></th>
+                      <th><input class="column-filter" type="search" data-column-filter="product" data-filter-key="changePct" aria-label="Filter product change percent"></th>
                     </tr>
                   </thead>
                   <tbody id="product-tbody"></tbody>
@@ -250,6 +248,30 @@
                   </tr>
                 </thead>
                 <tbody id="regional-products-tbody"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section class="dashboard-view" data-view-panel="files" role="tabpanel" hidden>
+          <section class="panel table-panel file-panel">
+            <div class="panel-head">
+              <div>
+                <span class="panel-kicker">Repository Files</span>
+                <h2>Shared Data</h2>
+              </div>
+            </div>
+            <div class="table-scroll shared-data-scroll">
+              <table class="file-table">
+                <thead>
+                  <tr>
+                    <th>File</th>
+                    <th>Rows</th>
+                    <th>Dates</th>
+                    <th>Source</th>
+                  </tr>
+                </thead>
+                <tbody id="file-tbody"></tbody>
               </table>
             </div>
           </section>

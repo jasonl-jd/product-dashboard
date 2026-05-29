@@ -60,6 +60,14 @@ const state = {
   rowKeys: new Set(),
   filters: Object.fromEntries(DIMENSIONS.map((dimension) => [dimension.key, new Set()])),
   filterSearch: {},
+  tableFilters: {
+    pivot: {},
+    product: {}
+  },
+  productSort: {
+    key: "netSales",
+    dir: "desc"
+  },
   pivotRows: [],
   productRows: [],
   regionalProductRows: [],
@@ -146,20 +154,9 @@ function bindEvents() {
   dom.filters.addEventListener("input", handleFilterInput);
   dom.filters.addEventListener("change", handleFilterChange);
   dom.filters.addEventListener("click", handleFilterClick);
-  dom.viewTabs?.addEventListener("click", handleViewTabClick);
-
-  document.querySelector(".pivot-table thead").addEventListener("click", (event) => {
-    const button = event.target.closest("[data-sort-key]");
-    if (!button) return;
-    const key = button.dataset.sortKey;
-    if (dom.sortSelect.value === key) {
-      dom.sortDir.value = dom.sortDir.value === "desc" ? "asc" : "desc";
-    } else {
-      dom.sortSelect.value = key;
-      dom.sortDir.value = key === "value" ? "asc" : "desc";
-    }
-    renderAll();
-  });
+  document.addEventListener("click", handleViewTabClick);
+  document.addEventListener("click", handleTableSortClick);
+  document.addEventListener("input", handleColumnFilterInput);
 
 }
 
@@ -178,6 +175,48 @@ function handleViewTabClick(event) {
     panel.classList.toggle("active", isActive);
     panel.hidden = !isActive;
   });
+}
+
+function handleTableSortClick(event) {
+  const button = event.target.closest("[data-table-sort]");
+  if (!button) return;
+
+  const table = button.dataset.tableSort;
+  const key = button.dataset.sortKey;
+
+  if (table === "pivot") {
+    if (dom.sortSelect.value === key) {
+      dom.sortDir.value = dom.sortDir.value === "desc" ? "asc" : "desc";
+    } else {
+      dom.sortSelect.value = key;
+      dom.sortDir.value = key === "value" ? "asc" : "desc";
+    }
+    renderAll();
+    return;
+  }
+
+  if (table === "product") {
+    if (state.productSort.key === key) {
+      state.productSort.dir = state.productSort.dir === "desc" ? "asc" : "desc";
+    } else {
+      state.productSort.key = key;
+      state.productSort.dir = key === "productTitle" || key === "sku" ? "asc" : "desc";
+    }
+    renderProductTable(state.productRows);
+  }
+}
+
+function handleColumnFilterInput(event) {
+  const input = event.target.closest("[data-column-filter]");
+  if (!input) return;
+
+  const table = input.dataset.columnFilter;
+  const key = input.dataset.filterKey;
+  if (!state.tableFilters[table]) state.tableFilters[table] = {};
+  state.tableFilters[table][key] = input.value;
+
+  if (table === "pivot") renderPivotTable(state.pivotRows);
+  if (table === "product") renderProductTable(state.productRows);
 }
 
 function populateDimensionSelect() {
@@ -833,6 +872,10 @@ function clearAllFilters() {
   for (const dimension of DIMENSIONS) {
     state.filters[dimension.key].clear();
   }
+  state.tableFilters = { pivot: {}, product: {} };
+  document.querySelectorAll("[data-column-filter]").forEach((input) => {
+    input.value = "";
+  });
   renderAll();
 }
 
@@ -956,7 +999,8 @@ function renderFiles() {
 function renderPivotTable(rows) {
   const dimension = getActiveDimension();
   const limit = getRowLimit();
-  const visibleRows = Number.isFinite(limit) ? rows.slice(0, limit) : rows;
+  const filteredRows = applyTableFilters(rows, "pivot");
+  const visibleRows = Number.isFinite(limit) ? filteredRows.slice(0, limit) : filteredRows;
 
   dom.pivotHeading.textContent = `Performance by ${dimension.label}`;
 
@@ -1040,24 +1084,88 @@ function emptyProduct(key) {
   };
 }
 
+function applyTableFilters(rows, table) {
+  const filters = state.tableFilters[table] || {};
+  const activeFilters = Object.entries(filters)
+    .map(([key, value]) => [key, cleanText(value).toLowerCase()])
+    .filter(([, value]) => value);
+
+  if (!activeFilters.length) return rows.slice();
+
+  return rows.filter((row) => activeFilters.every(([key, value]) => getTableFilterText(table, key, row).includes(value)));
+}
+
+function getTableFilterText(table, key, row) {
+  const raw = getTableRawValue(row, key);
+  const display = getTableDisplayValue(table, key, row);
+  return `${raw ?? ""} ${display ?? ""}`.toLowerCase();
+}
+
+function getTableRawValue(row, key) {
+  if (key === "value") return row.value;
+  if (key === "productTitle") return row.productTitle;
+  if (key === "sku") return row.sku;
+  return row[key];
+}
+
+function getTableDisplayValue(table, key, row) {
+  if ((key === "compareSales" || key === "change" || key === "changePct") && !row.hasComparison) return "";
+  if (key === "productTitle") return row.productTitle;
+  if (key === "sku") return row.sku;
+  if (key === "value") return row.value;
+  if (key === "netSales" || key === "compareSales" || key === "change") return formatCurrency(row[key]);
+  if (key === "netUnits") return formatNumber(row.netUnits);
+  if (key === "salesShare" || key === "unitsShare") return formatPercent(row[key]);
+  if (key === "changePct") return row.changePct === null ? "n/a" : formatPercent(row.changePct);
+  return cleanText(row[key]);
+}
+
+function sortProductRows(rows) {
+  const { key, dir } = state.productSort;
+  const direction = dir === "asc" ? 1 : -1;
+
+  return rows.slice().sort((a, b) => {
+    const aValue = getTableRawValue(a, key);
+    const bValue = getTableRawValue(b, key);
+    const aMissing = aValue === null || aValue === undefined || aValue === "";
+    const bMissing = bValue === null || bValue === undefined || bValue === "";
+
+    if (aMissing && bMissing) return collator.compare(a.productTitle, b.productTitle);
+    if (aMissing) return 1;
+    if (bMissing) return -1;
+
+    if (typeof aValue === "string" || typeof bValue === "string") {
+      return collator.compare(String(aValue), String(bValue)) * direction;
+    }
+
+    const primary = ((Number(aValue) || 0) - (Number(bValue) || 0)) * direction;
+    if (primary) return primary;
+    return collator.compare(a.productTitle, b.productTitle);
+  });
+}
+
 function renderProductTable(rows) {
   if (!dom.productTbody) return;
 
-  const totalSales = sum(rows, "netSales");
-  const totalUnits = sum(rows, "netUnits");
-  const hasComparison = rows.some((row) => row.hasComparison);
-  const totalCompareSales = hasComparison ? sum(rows, "compareSales") : 0;
+  const filteredRows = sortProductRows(applyTableFilters(rows, "product"));
+  const totalSales = sum(filteredRows, "netSales");
+  const totalUnits = sum(filteredRows, "netUnits");
+  const hasComparison = filteredRows.some((row) => row.hasComparison);
+  const totalCompareSales = hasComparison ? sum(filteredRows, "compareSales") : 0;
   const totalChange = hasComparison ? totalSales - totalCompareSales : null;
   const totalChangePct = hasComparison ? percentChange(totalSales, totalCompareSales) : null;
-  const suffix = rows.length === 1 ? "product" : "products";
-  dom.productHeading.textContent = `Product Results (${numberFormat.format(rows.length)} ${suffix})`;
+  const suffix = filteredRows.length === 1 ? "product" : "products";
+  const countLabel = filteredRows.length === rows.length
+    ? `${numberFormat.format(rows.length)} ${suffix}`
+    : `${numberFormat.format(filteredRows.length)} of ${numberFormat.format(rows.length)} products`;
+  dom.productHeading.textContent = `Product Results (${countLabel})`;
 
-  if (!rows.length) {
+  if (!filteredRows.length) {
     dom.productTbody.innerHTML = `<tr><td colspan="7">No products for the selected period and filters</td></tr>`;
     return;
   }
 
-  const bodyRows = rows.map((row) => `
+  const bodyRows = filteredRows.map((row) => `
     <tr>
       <td><div class="clip" title="${escapeHtml(row.productTitle)}">${escapeHtml(row.productTitle)}</div></td>
       <td><div class="clip" title="${escapeHtml(row.sku)}">${escapeHtml(row.sku)}</div></td>
@@ -1228,7 +1336,7 @@ function getRowLimit() {
 
 function exportPivotCsv() {
   const dimension = getActiveDimension();
-  const rows = state.pivotRows;
+  const rows = applyTableFilters(state.pivotRows, "pivot");
   const headers = [dimension.label, "Net Sales", "% Sales", "Net Units", "% Units", "Compare Sales", "Change", "Change %"];
   const lines = [
     headers,
