@@ -7,7 +7,7 @@ window.addEventListener("unhandledrejection", (event) => reportGlobalError(event
 const DATA_MANIFEST_URL = "data/manifest.json";
 const DATA_CACHE_DB = "product-performance-dashboard";
 const DATA_CACHE_STORE = "parsed-files";
-const DATA_CACHE_VERSION = "parsed-csv-v4";
+const DATA_CACHE_VERSION = "parsed-csv-v5";
 const BLANK = "(blank)";
 const MAX_FILTER_OPTIONS = 180;
 
@@ -1818,6 +1818,22 @@ function parseDateValue(value) {
   if (isoDate) {
     const date = new Date(`${isoDate[1]}-${isoDate[2]}-${isoDate[3]}T00:00:00Z`);
     return { dateTime: text, dateKey: `${isoDate[1]}-${isoDate[2]}-${isoDate[3]}` };
+  }
+
+  const localDate = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if (localDate) {
+    const month = Number(localDate[1]);
+    const day = Number(localDate[2]);
+    const year = Number(localDate[3]);
+    const hour = Number(localDate[4] || 0);
+    const minute = Number(localDate[5] || 0);
+    const second = Number(localDate[6] || 0);
+
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      const dateKeyText = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+      return { dateTime: date.toISOString(), dateKey: dateKeyText };
+    }
   }
 
   const parsed = new Date(text);
