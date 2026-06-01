@@ -781,7 +781,7 @@ th.numeric {
 }
 
 .product-table {
-  min-width: 900px;
+  min-width: 1020px;
 }
 
 .product-table th,
@@ -806,12 +806,19 @@ th.numeric {
 
 .product-table th:nth-child(3),
 .product-table td:nth-child(3) {
-  min-width: 104px;
-  width: 104px;
+  min-width: 112px;
+  width: 112px;
+  max-width: 150px;
 }
 
 .product-table th:nth-child(4),
 .product-table td:nth-child(4) {
+  min-width: 104px;
+  width: 104px;
+}
+
+.product-table th:nth-child(5),
+.product-table td:nth-child(5) {
   min-width: 126px;
   width: 126px;
 }

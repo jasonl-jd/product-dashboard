@@ -11,6 +11,8 @@ const DATA_CACHE_VERSION = "parsed-csv-v5";
 const BLANK = "(blank)";
 const MAX_FILTER_OPTIONS = 180;
 const SKU_DISPLAY_WIDTH = 8;
+const PRICE_STATUS_LABELS = ["Full Price", "Markdown"];
+const STATUS_DISPLAY_ORDER = ["Full Price", "Markdown", "Return"];
 
 const DIMENSIONS = [
   { key: "shippingProvince", label: "Shipping Province", headers: ["Shipping Province"] },
@@ -49,6 +51,7 @@ const FIELD_DEFS = [
 
 const SORTERS = {
   value: (row) => row.value.toLocaleLowerCase(),
+  status: (row) => row.status,
   netSales: (row) => row.netSales,
   salesShare: (row) => row.salesShare,
   netUnits: (row) => row.netUnits,
@@ -188,7 +191,7 @@ function handleTableSortClick(event) {
       dom.sortDir.value = dom.sortDir.value === "desc" ? "asc" : "desc";
     } else {
       dom.sortSelect.value = key;
-      dom.sortDir.value = key === "value" ? "asc" : "desc";
+      dom.sortDir.value = key === "value" || key === "status" ? "asc" : "desc";
     }
     renderAll();
     return;
@@ -199,7 +202,7 @@ function handleTableSortClick(event) {
       state.productSort.dir = state.productSort.dir === "desc" ? "asc" : "desc";
     } else {
       state.productSort.key = key;
-      state.productSort.dir = key === "productTitle" || key === "sku" ? "asc" : "desc";
+      state.productSort.dir = key === "productTitle" || key === "sku" || key === "status" ? "asc" : "desc";
     }
     renderProductTable(state.productRows);
   }
@@ -902,6 +905,7 @@ function renderFilters() {
   for (const record of state.records) {
     for (const dimension of DIMENSIONS) {
       const value = record[dimension.key] || BLANK;
+      if (isHiddenFilterValue(value)) continue;
       const counts = countsByDimension[dimension.key];
       counts.set(value, (counts.get(value) || 0) + 1);
     }
@@ -909,6 +913,7 @@ function renderFilters() {
 
   dom.filters.innerHTML = DIMENSIONS.map((dimension, index) => {
     const selected = state.filters[dimension.key];
+    removeHiddenFilterSelections(selected);
     const search = state.filterSearch[dimension.key] || "";
     const selectedLabel = selected.size ? numberFormat.format(selected.size) : "All";
     const counts = countsByDimension[dimension.key];
@@ -985,10 +990,12 @@ function clearAllFilters() {
 
 function buildPivot(currentRecords, comparisonRecords, hasComparison) {
   const dimension = getActiveDimension();
-  const currentMap = aggregateByDimension(currentRecords, dimension.key);
-  const compareMap = aggregateByDimension(comparisonRecords, dimension.key);
-  const totalSales = sum(currentRecords, "netSales");
-  const totalUnits = sum(currentRecords, "netUnits");
+  const currentPivotRecords = currentRecords.filter((record) => !isHiddenResultValue(record[dimension.key]));
+  const comparisonPivotRecords = comparisonRecords.filter((record) => !isHiddenResultValue(record[dimension.key]));
+  const currentMap = aggregateByDimension(currentPivotRecords, dimension.key);
+  const compareMap = aggregateByDimension(comparisonPivotRecords, dimension.key);
+  const totalSales = sum(currentPivotRecords, "netSales");
+  const totalUnits = sum(currentPivotRecords, "netUnits");
   const values = hasComparison ? new Set([...currentMap.keys(), ...compareMap.keys()]) : new Set(currentMap.keys());
 
   const rows = Array.from(values).map((value) => {
@@ -998,6 +1005,7 @@ function buildPivot(currentRecords, comparisonRecords, hasComparison) {
 
     return {
       value,
+      status: current.status || comparison.status || "",
       netSales: current.netSales,
       netUnits: current.netUnits,
       orders: current.orders.size,
@@ -1018,20 +1026,27 @@ function aggregateByDimension(records, key) {
   const map = new Map();
   for (const record of records) {
     const value = record[key] || BLANK;
+    if (isHiddenResultValue(value)) continue;
     if (!map.has(value)) map.set(value, emptyAggregate());
     const aggregate = map.get(value);
     aggregate.netSales += record.netSales;
     aggregate.netUnits += record.netUnits;
     if (record.orderKey) aggregate.orders.add(record.orderKey);
+    addStatusBreakdown(aggregate.statusBreakdown, record);
   }
+  map.forEach((aggregate) => {
+    aggregate.status = getStatusLabel(aggregate.statusBreakdown);
+  });
   return map;
 }
 
 function emptyAggregate() {
   return {
+    status: "",
     netSales: 0,
     netUnits: 0,
-    orders: new Set()
+    orders: new Set(),
+    statusBreakdown: new Map()
   };
 }
 
@@ -1109,13 +1124,14 @@ function renderPivotTable(rows) {
   updateSortHeaderStates();
 
   if (!visibleRows.length) {
-    dom.pivotTbody.innerHTML = `<tr><td colspan="8">No rows for the selected period and filters</td></tr>`;
+    dom.pivotTbody.innerHTML = `<tr><td colspan="9">No rows for the selected period and filters</td></tr>`;
     return;
   }
 
   dom.pivotTbody.innerHTML = visibleRows.map((row) => `
     <tr>
       <td><div class="clip" title="${escapeHtml(row.value)}">${escapeHtml(row.value)}</div></td>
+      <td><div class="clip" title="${escapeHtml(row.status)}">${escapeHtml(row.status)}</div></td>
       <td class="numeric">${formatCurrency(row.netSales)}</td>
       <td class="numeric">${formatPercent(row.salesShare)}</td>
       <td class="numeric">${formatNumber(row.netUnits)}</td>
@@ -1164,6 +1180,8 @@ function aggregateProducts(records) {
       map.set(key, {
         sku,
         productTitle: title,
+        status: BLANK,
+        statusBreakdown: new Map(),
         netSales: 0,
         netUnits: 0,
         salesShare: 0
@@ -1173,9 +1191,44 @@ function aggregateProducts(records) {
     const product = map.get(key);
     product.netSales += record.netSales;
     product.netUnits += record.netUnits;
+    addStatusBreakdown(product.statusBreakdown, record);
   }
 
+  map.forEach((product) => {
+    product.status = getStatusLabel(product.statusBreakdown);
+  });
+
   return map;
+}
+
+function addStatusBreakdown(statusBreakdown, record) {
+  const status = normalizeStatus(record.status);
+  if (isBlankValue(status) || isReferenceErrorValue(status)) return;
+  const metrics = statusBreakdown.get(status) || { netSales: 0, netUnits: 0 };
+  metrics.netSales += record.netSales;
+  metrics.netUnits += record.netUnits;
+  statusBreakdown.set(status, metrics);
+}
+
+function getStatusLabel(statusBreakdown) {
+  if (!statusBreakdown || !statusBreakdown.size) return "";
+  const statuses = Array.from(statusBreakdown.entries())
+    .filter(([, metrics]) => (Number(metrics.netSales) || 0) !== 0 || (Number(metrics.netUnits) || 0) !== 0)
+    .map(([status]) => status)
+    .sort(compareStatusLabels);
+  const priceStatuses = statuses.filter((status) => PRICE_STATUS_LABELS.includes(status));
+  const displayStatuses = priceStatuses.length ? priceStatuses : statuses;
+
+  return displayStatuses.length ? displayStatuses.join(" + ") : "";
+}
+
+function compareStatusLabels(a, b) {
+  const aIndex = STATUS_DISPLAY_ORDER.indexOf(a);
+  const bIndex = STATUS_DISPLAY_ORDER.indexOf(b);
+  const aRank = aIndex >= 0 ? aIndex : STATUS_DISPLAY_ORDER.length;
+  const bRank = bIndex >= 0 ? bIndex : STATUS_DISPLAY_ORDER.length;
+  if (aRank !== bRank) return aRank - bRank;
+  return collator.compare(a, b);
 }
 
 function getProductKey(record) {
@@ -1202,6 +1255,8 @@ function emptyProduct() {
   return {
     sku: BLANK,
     productTitle: BLANK,
+    status: "",
+    statusBreakdown: new Map(),
     netSales: 0,
     netUnits: 0,
     salesShare: 0
@@ -1212,6 +1267,7 @@ function getTableRawValue(row, key) {
   if (key === "value") return row.value;
   if (key === "productTitle") return row.productTitle;
   if (key === "sku") return row.sku;
+  if (key === "status") return row.status;
   return row[key];
 }
 
@@ -1254,7 +1310,7 @@ function renderProductTable(rows) {
   updateSortHeaderStates();
 
   if (!sortedRows.length) {
-    dom.productTbody.innerHTML = `<tr><td colspan="7">No products for the selected period and filters</td></tr>`;
+    dom.productTbody.innerHTML = `<tr><td colspan="8">No products for the selected period and filters</td></tr>`;
     return;
   }
 
@@ -1262,6 +1318,7 @@ function renderProductTable(rows) {
     <tr>
       <td><div class="clip" title="${escapeHtml(row.productTitle)}">${escapeHtml(row.productTitle)}</div></td>
       <td><div class="clip" title="${escapeHtml(row.sku)}">${escapeHtml(row.sku)}</div></td>
+      <td><div class="clip" title="${escapeHtml(row.status)}">${escapeHtml(row.status)}</div></td>
       <td class="numeric">${formatCurrency(row.netSales)}</td>
       <td class="numeric">${formatNumber(row.netUnits)}</td>
       <td class="numeric">${formatPercent(row.salesShare)}</td>
@@ -1273,6 +1330,7 @@ function renderProductTable(rows) {
   bodyRows.push(`
     <tr class="total-row">
       <td>Total</td>
+      <td></td>
       <td></td>
       <td class="numeric">${formatCurrency(totalSales)}</td>
       <td class="numeric">${formatNumber(totalUnits)}</td>
@@ -1430,11 +1488,12 @@ function getRowLimit() {
 function exportPivotCsv() {
   const dimension = getActiveDimension();
   const rows = state.pivotRows;
-  const headers = [dimension.label, "Net Sales", "% Sales", "Net Units", "% Units", "Compare Sales", "Change", "Change %"];
+  const headers = [dimension.label, "Status", "Net Sales", "% Sales", "Net Units", "% Units", "Compare Sales", "Change", "Change %"];
   const lines = [
     headers,
     ...rows.map((row) => [
       row.value,
+      row.status,
       row.netSales,
       row.salesShare,
       row.netUnits,
@@ -1887,6 +1946,31 @@ function cleanText(value) {
 
 function cleanDimension(value) {
   return cleanText(value) || BLANK;
+}
+
+function removeHiddenFilterSelections(selected) {
+  if (!selected) return;
+  for (const value of Array.from(selected)) {
+    if (isHiddenFilterValue(value)) selected.delete(value);
+  }
+}
+
+function isHiddenFilterValue(value) {
+  return isBlankValue(value) || isReferenceErrorValue(value);
+}
+
+function isHiddenResultValue(value) {
+  return isBlankValue(value);
+}
+
+function isBlankValue(value) {
+  const text = cleanText(value);
+  return !text || text === BLANK;
+}
+
+function isReferenceErrorValue(value) {
+  const text = cleanText(value).toUpperCase();
+  return text === "#REF" || text === "#REF!";
 }
 
 function hydrateRecord(record) {
