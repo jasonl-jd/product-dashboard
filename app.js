@@ -10,6 +10,7 @@ const DATA_CACHE_STORE = "parsed-files";
 const DATA_CACHE_VERSION = "parsed-csv-v5";
 const BLANK = "(blank)";
 const MAX_FILTER_OPTIONS = 180;
+const SKU_DISPLAY_WIDTH = 8;
 
 const DIMENSIONS = [
   { key: "shippingProvince", label: "Shipping Province", headers: ["Shipping Province"] },
@@ -1134,12 +1135,15 @@ function buildProductResults(records, comparisonRecords = [], hasComparison = fa
 
   return Array.from(productKeys)
     .map((key) => {
-      const current = currentMap.get(key) || emptyProduct(key);
-      const comparison = compareMap.get(key) || emptyProduct(key);
+      const current = currentMap.get(key) || emptyProduct();
+      const comparison = compareMap.get(key) || emptyProduct();
+      const displayProduct = currentMap.get(key) || compareMap.get(key) || emptyProduct();
       const change = hasComparison ? current.netSales - comparison.netSales : null;
 
       return {
-        ...current,
+        ...displayProduct,
+        netSales: current.netSales,
+        netUnits: current.netUnits,
         salesShare: totalSales ? current.netSales / totalSales : 0,
         hasComparison,
         compareSales: hasComparison ? comparison.netSales : null,
@@ -1154,8 +1158,8 @@ function aggregateProducts(records) {
   const map = new Map();
   for (const record of records) {
     const title = record.productTitle || BLANK;
-    const sku = record.sku || BLANK;
-    const key = `${sku}|${title}`;
+    const sku = formatDisplaySku(record.sku) || BLANK;
+    const key = getProductKey(record);
     if (!map.has(key)) {
       map.set(key, {
         sku,
@@ -1174,13 +1178,30 @@ function aggregateProducts(records) {
   return map;
 }
 
-function emptyProduct(key) {
-  const parts = String(key).split("|");
-  const sku = parts.shift() || BLANK;
-  const productTitle = parts.join("|") || BLANK;
+function getProductKey(record) {
+  const skuKey = normalizeSkuKey(record.sku);
+  const titleKey = cleanText(record.productTitle).toLocaleLowerCase();
+  return `${skuKey}|${titleKey}`;
+}
+
+function normalizeSkuKey(value) {
+  const text = cleanText(value);
+  if (!text || text === BLANK) return "";
+  if (/^\d+$/.test(text)) return text.replace(/^0+(?=\d)/, "");
+  return text.toLocaleLowerCase();
+}
+
+function formatDisplaySku(value) {
+  const text = cleanText(value);
+  if (!text || text === BLANK) return "";
+  if (/^\d+$/.test(text)) return text.padStart(SKU_DISPLAY_WIDTH, "0");
+  return text;
+}
+
+function emptyProduct() {
   return {
-    sku,
-    productTitle,
+    sku: BLANK,
+    productTitle: BLANK,
     netSales: 0,
     netUnits: 0,
     salesShare: 0
