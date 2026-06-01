@@ -11,10 +11,13 @@ Example:
   "files": [
     {
       "path": "data/weekly-style-sales-2026-wk-15.csv",
-      "name": "2026 Week 15"
+      "name": "2026 Week 15",
+      "version": "2026-05-24"
     }
   ]
 }
 ```
 
 Only files listed in `manifest.json` are loaded by the dashboard. Every listed file must exist in this folder before pushing the repository.
+
+When replacing a CSV at the same path, update its `version` value in `manifest.json` so browsers refresh their cached parsed data.
