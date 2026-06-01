@@ -60,10 +60,6 @@ const state = {
   rowKeys: new Set(),
   filters: Object.fromEntries(DIMENSIONS.map((dimension) => [dimension.key, new Set()])),
   filterSearch: {},
-  tableFilters: {
-    pivot: {},
-    product: {}
-  },
   productSort: {
     key: "netSales",
     dir: "desc"
@@ -156,7 +152,6 @@ function bindEvents() {
   dom.filters.addEventListener("click", handleFilterClick);
   document.addEventListener("click", handleViewTabClick);
   document.addEventListener("click", handleTableSortClick);
-  document.addEventListener("input", handleColumnFilterInput);
 
 }
 
@@ -206,17 +201,23 @@ function handleTableSortClick(event) {
   }
 }
 
-function handleColumnFilterInput(event) {
-  const input = event.target.closest("[data-column-filter]");
-  if (!input) return;
+function updateSortHeaderStates() {
+  document.querySelectorAll("[data-table-sort]").forEach((button) => {
+    const table = button.dataset.tableSort;
+    const key = button.dataset.sortKey;
+    const isActive = table === "pivot"
+      ? dom.sortSelect.value === key
+      : state.productSort.key === key;
+    const direction = table === "pivot" ? dom.sortDir.value : state.productSort.dir;
 
-  const table = input.dataset.columnFilter;
-  const key = input.dataset.filterKey;
-  if (!state.tableFilters[table]) state.tableFilters[table] = {};
-  state.tableFilters[table][key] = input.value;
-
-  if (table === "pivot") renderPivotTable(state.pivotRows);
-  if (table === "product") renderProductTable(state.productRows);
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-sort", isActive ? (direction === "asc" ? "ascending" : "descending") : "none");
+    if (isActive) {
+      button.dataset.sortDir = direction;
+    } else {
+      delete button.dataset.sortDir;
+    }
+  });
 }
 
 function populateDimensionSelect() {
@@ -872,10 +873,6 @@ function clearAllFilters() {
   for (const dimension of DIMENSIONS) {
     state.filters[dimension.key].clear();
   }
-  state.tableFilters = { pivot: {}, product: {} };
-  document.querySelectorAll("[data-column-filter]").forEach((input) => {
-    input.value = "";
-  });
   renderAll();
 }
 
@@ -999,10 +996,10 @@ function renderFiles() {
 function renderPivotTable(rows) {
   const dimension = getActiveDimension();
   const limit = getRowLimit();
-  const filteredRows = applyTableFilters(rows, "pivot");
-  const visibleRows = Number.isFinite(limit) ? filteredRows.slice(0, limit) : filteredRows;
+  const visibleRows = Number.isFinite(limit) ? rows.slice(0, limit) : rows;
 
   dom.pivotHeading.textContent = `Performance by ${dimension.label}`;
+  updateSortHeaderStates();
 
   if (!visibleRows.length) {
     dom.pivotTbody.innerHTML = `<tr><td colspan="8">No rows for the selected period and filters</td></tr>`;
@@ -1084,40 +1081,11 @@ function emptyProduct(key) {
   };
 }
 
-function applyTableFilters(rows, table) {
-  const filters = state.tableFilters[table] || {};
-  const activeFilters = Object.entries(filters)
-    .map(([key, value]) => [key, cleanText(value).toLowerCase()])
-    .filter(([, value]) => value);
-
-  if (!activeFilters.length) return rows.slice();
-
-  return rows.filter((row) => activeFilters.every(([key, value]) => getTableFilterText(table, key, row).includes(value)));
-}
-
-function getTableFilterText(table, key, row) {
-  const raw = getTableRawValue(row, key);
-  const display = getTableDisplayValue(table, key, row);
-  return `${raw ?? ""} ${display ?? ""}`.toLowerCase();
-}
-
 function getTableRawValue(row, key) {
   if (key === "value") return row.value;
   if (key === "productTitle") return row.productTitle;
   if (key === "sku") return row.sku;
   return row[key];
-}
-
-function getTableDisplayValue(table, key, row) {
-  if ((key === "compareSales" || key === "change" || key === "changePct") && !row.hasComparison) return "";
-  if (key === "productTitle") return row.productTitle;
-  if (key === "sku") return row.sku;
-  if (key === "value") return row.value;
-  if (key === "netSales" || key === "compareSales" || key === "change") return formatCurrency(row[key]);
-  if (key === "netUnits") return formatNumber(row.netUnits);
-  if (key === "salesShare" || key === "unitsShare") return formatPercent(row[key]);
-  if (key === "changePct") return row.changePct === null ? "n/a" : formatPercent(row.changePct);
-  return cleanText(row[key]);
 }
 
 function sortProductRows(rows) {
@@ -1147,25 +1115,23 @@ function sortProductRows(rows) {
 function renderProductTable(rows) {
   if (!dom.productTbody) return;
 
-  const filteredRows = sortProductRows(applyTableFilters(rows, "product"));
-  const totalSales = sum(filteredRows, "netSales");
-  const totalUnits = sum(filteredRows, "netUnits");
-  const hasComparison = filteredRows.some((row) => row.hasComparison);
-  const totalCompareSales = hasComparison ? sum(filteredRows, "compareSales") : 0;
+  const sortedRows = sortProductRows(rows);
+  const totalSales = sum(sortedRows, "netSales");
+  const totalUnits = sum(sortedRows, "netUnits");
+  const hasComparison = sortedRows.some((row) => row.hasComparison);
+  const totalCompareSales = hasComparison ? sum(sortedRows, "compareSales") : 0;
   const totalChange = hasComparison ? totalSales - totalCompareSales : null;
   const totalChangePct = hasComparison ? percentChange(totalSales, totalCompareSales) : null;
-  const suffix = filteredRows.length === 1 ? "product" : "products";
-  const countLabel = filteredRows.length === rows.length
-    ? `${numberFormat.format(rows.length)} ${suffix}`
-    : `${numberFormat.format(filteredRows.length)} of ${numberFormat.format(rows.length)} products`;
-  dom.productHeading.textContent = `Product Results (${countLabel})`;
+  const suffix = sortedRows.length === 1 ? "product" : "products";
+  dom.productHeading.textContent = `Product Results (${numberFormat.format(rows.length)} ${suffix})`;
+  updateSortHeaderStates();
 
-  if (!filteredRows.length) {
+  if (!sortedRows.length) {
     dom.productTbody.innerHTML = `<tr><td colspan="7">No products for the selected period and filters</td></tr>`;
     return;
   }
 
-  const bodyRows = filteredRows.map((row) => `
+  const bodyRows = sortedRows.map((row) => `
     <tr>
       <td><div class="clip" title="${escapeHtml(row.productTitle)}">${escapeHtml(row.productTitle)}</div></td>
       <td><div class="clip" title="${escapeHtml(row.sku)}">${escapeHtml(row.sku)}</div></td>
@@ -1336,7 +1302,7 @@ function getRowLimit() {
 
 function exportPivotCsv() {
   const dimension = getActiveDimension();
-  const rows = applyTableFilters(state.pivotRows, "pivot");
+  const rows = state.pivotRows;
   const headers = [dimension.label, "Net Sales", "% Sales", "Net Units", "% Units", "Compare Sales", "Change", "Change %"];
   const lines = [
     headers,
