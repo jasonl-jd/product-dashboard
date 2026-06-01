@@ -37,6 +37,10 @@ The app expects each CSV to be a flat export with these headers in the first non
 
 The sample file also includes `SKU`, `Product Title`, and `Order ID`; the dashboard uses those fields for row identity and order counts when present.
 
+Export `Order ID` as full text, not scientific notation. If a CSV contains rounded values such as `6.35053E+12`, the dashboard falls back to `Order ID + timestamp` for order counting, but full order IDs are the most accurate source for AOV.
+
+The dashboard loads every row from every manifest file. Do not list overlapping files unless you intentionally want both files counted.
+
 Regions are derived from `Shipping Province`:
 
 - BC: British Columbia

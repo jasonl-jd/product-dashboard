@@ -254,7 +254,6 @@ async function loadRepositoryData() {
   const files = normalizeManifestFiles(manifest);
   const records = [];
   const fileMetas = [];
-  const rowKeys = new Set();
 
   for (const file of files) {
     setStatus(`Loading ${file.name}...`, "busy");
@@ -266,20 +265,8 @@ async function loadRepositoryData() {
     const sourceHash = `repo:${file.path}`;
     const buffer = await response.arrayBuffer();
     const parsed = await parseRepositoryFile(buffer, file, response, sourceHash, (message) => setStatus(message, "busy"));
-    const addedRecords = [];
-    let rowsAdded = 0;
-    let rowsSkipped = 0;
-
-    for (const record of parsed.records.map(hydrateRecord)) {
-      if (rowKeys.has(record.rowKey)) {
-        rowsSkipped += 1;
-        continue;
-      }
-      rowKeys.add(record.rowKey);
-      records.push(record);
-      addedRecords.push(record);
-      rowsAdded += 1;
-    }
+    const addedRecords = parsed.records.map(hydrateRecord);
+    records.push(...addedRecords);
 
     fileMetas.push({
       hash: sourceHash,
@@ -287,8 +274,8 @@ async function loadRepositoryData() {
       path: file.path,
       source: "Repository",
       rowsRead: parsed.records.length,
-      rowsAdded,
-      rowsSkipped,
+      rowsAdded: addedRecords.length,
+      rowsSkipped: 0,
       minDate: parsed.minDate,
       maxDate: parsed.maxDate,
       netSales: sum(addedRecords, "netSales"),
@@ -298,7 +285,7 @@ async function loadRepositoryData() {
 
   state.records = records;
   state.files = fileMetas;
-  state.rowKeys = rowKeys;
+  state.rowKeys = new Set(records.map((record) => record.rowKey));
 }
 
 async function fetchRepositoryManifest() {
@@ -706,7 +693,8 @@ function normalizeRecord(cells, fieldIndex, fileName, sourceHash, rowNumber) {
     netUnits: toNumber(cells[fieldIndex.netUnits]),
     sourceFile: fileName,
     sourceHash,
-    sourceRow: rowNumber
+    sourceRow: rowNumber,
+    rowKey: `${sourceHash}|row:${rowNumber}`
   };
 
   for (const dimension of DIMENSIONS) {
@@ -715,17 +703,7 @@ function normalizeRecord(cells, fieldIndex, fileName, sourceHash, rowNumber) {
   record.status = normalizeStatus(record.status);
   record.region = getRegion(record.shippingProvince);
 
-  record.rowKey = [
-    record.orderId,
-    record.sku,
-    record.productTitle,
-    record.dateTime,
-    record.netSales,
-    record.netUnits,
-    record.shippingProvince,
-    record.status,
-    record.customerType
-  ].join("|");
+  record.orderKey = getOrderKey(record);
 
   return record;
 }
@@ -915,7 +893,7 @@ function aggregateByDimension(records, key) {
     const aggregate = map.get(value);
     aggregate.netSales += record.netSales;
     aggregate.netUnits += record.netUnits;
-    if (record.orderId) aggregate.orders.add(record.orderId);
+    if (record.orderKey) aggregate.orders.add(record.orderKey);
   }
   return map;
 }
@@ -1216,7 +1194,7 @@ function summarize(records) {
   for (const record of records) {
     netSales += record.netSales;
     netUnits += record.netUnits;
-    if (record.orderId) orders.add(record.orderId);
+    if (record.orderKey) orders.add(record.orderKey);
   }
 
   return {
@@ -1747,16 +1725,29 @@ function cleanDimension(value) {
 }
 
 function hydrateRecord(record) {
-  return {
+  const hydrated = {
     ...record,
     status: normalizeStatus(record.status),
     region: getRegion(record.shippingProvince)
   };
+  hydrated.orderKey = getOrderKey(hydrated);
+  return hydrated;
 }
 
 function normalizeStatus(value) {
   const status = cleanDimension(value);
   return status.toUpperCase() === "#VALUE" || status.toUpperCase() === "#VALUE!" ? "Full Price" : status;
+}
+
+function getOrderKey(record) {
+  const orderId = cleanText(record.orderId);
+  if (!orderId) return `${record.sourceHash}|row:${record.sourceRow}`;
+  if (isScientificNotation(orderId)) return `${orderId}|${record.dateTime || record.dateKey || ""}`;
+  return orderId;
+}
+
+function isScientificNotation(value) {
+  return /^[+-]?\d+(?:\.\d+)?e[+-]?\d+$/i.test(cleanText(value));
 }
 
 function getRegion(province) {
