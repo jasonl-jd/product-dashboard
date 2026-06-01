@@ -97,11 +97,13 @@ Example `data/manifest.json`:
   "files": [
     {
       "path": "data/weekly-style-sales-2026-wk-15.csv",
-      "name": "2026 Week 15"
+      "name": "2026 Week 15",
+      "version": "2026-05-24"
     },
     {
       "path": "data/weekly-style-sales-2026-wk-16.csv",
-      "name": "2026 Week 16"
+      "name": "2026 Week 16",
+      "version": "2026-05-31"
     }
   ]
 }
@@ -110,6 +112,8 @@ Example `data/manifest.json`:
 The static dashboard cannot write uploads back to GitHub by itself; data file management happens through repository commits controlled by the repository owner.
 
 Only list CSV files that actually exist in the repository. If a manifest entry points to a missing file, the dashboard will stop and show the missing path so the shared dataset does not load partially by accident.
+
+The dashboard caches parsed CSV data in the browser with IndexedDB. The first load still downloads and parses the files, but later visits can reuse cached parsed records. If you replace a CSV without changing its file path, update that manifest entry's `version` so every browser knows to refresh its cache.
 
 ## Troubleshooting Data Files
 

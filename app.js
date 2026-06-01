@@ -5,6 +5,9 @@ window.addEventListener("error", (event) => reportGlobalError(event.error || eve
 window.addEventListener("unhandledrejection", (event) => reportGlobalError(event.reason));
 
 const DATA_MANIFEST_URL = "data/manifest.json";
+const DATA_CACHE_DB = "product-performance-dashboard";
+const DATA_CACHE_STORE = "parsed-files";
+const DATA_CACHE_VERSION = "parsed-csv-v4";
 const BLANK = "(blank)";
 const MAX_FILTER_OPTIONS = 180;
 
@@ -129,7 +132,7 @@ function collectDom() {
 }
 
 function bindEvents() {
-  dom.refreshData?.addEventListener("click", () => refreshRepositoryData({ preserveDates: true }));
+  dom.refreshData?.addEventListener("click", () => refreshRepositoryData({ preserveDates: true, forceRefresh: true }));
   dom.allDates.addEventListener("click", setAllDates);
   dom.previousPeriod.addEventListener("click", setPreviousPeriod);
   dom.dimensionSelect.addEventListener("change", renderAll);
@@ -226,13 +229,13 @@ function populateDimensionSelect() {
     .join("");
 }
 
-async function refreshRepositoryData({ preserveDates } = { preserveDates: true }) {
+async function refreshRepositoryData({ preserveDates, forceRefresh } = { preserveDates: true, forceRefresh: false }) {
   if (state.loading) return;
   state.loading = true;
   setStatus("Loading repository data...", "busy");
 
   try {
-    await loadRepositoryData();
+    await loadRepositoryData({ forceRefresh });
     ensureDateDefaults(!preserveDates || !state.dateTouched);
     renderAll();
 
@@ -249,22 +252,36 @@ async function refreshRepositoryData({ preserveDates } = { preserveDates: true }
   }
 }
 
-async function loadRepositoryData() {
+async function loadRepositoryData({ forceRefresh = false } = {}) {
   const manifest = await fetchRepositoryManifest();
   const files = normalizeManifestFiles(manifest);
   const records = [];
   const fileMetas = [];
+  const cacheKeys = [];
 
   for (const file of files) {
-    setStatus(`Loading ${file.name}...`, "busy");
-    const response = await fetch(withCacheBust(file.path), { cache: "no-store" });
-    if (!response.ok) {
-      throw new Error(`Could not load ${file.path} (${response.status}). Check data/manifest.json and the file path.`);
+    const sourceHash = `repo:${file.path}`;
+    setStatus(`Checking ${file.name}...`, "busy");
+    const signature = await getRepositoryFileSignature(file);
+    const cacheKey = signature ? getParsedFileCacheKey(file, signature) : "";
+    if (cacheKey) cacheKeys.push(cacheKey);
+
+    let parsed = cacheKey && !forceRefresh ? await readCachedParsedFile(cacheKey) : null;
+    if (parsed) {
+      setStatus(`Using cached data for ${file.name}...`, "busy");
+      await pause();
+    } else {
+      setStatus(`Loading ${file.name}...`, "busy");
+      const response = await fetch(withCacheBust(file.path), { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(`Could not load ${file.path} (${response.status}). Check data/manifest.json and the file path.`);
+      }
+
+      const buffer = await response.arrayBuffer();
+      parsed = await parseRepositoryFile(buffer, file, response, sourceHash, (message) => setStatus(message, "busy"));
+      if (cacheKey) await writeCachedParsedFile(cacheKey, parsed);
     }
 
-    const sourceHash = `repo:${file.path}`;
-    const buffer = await response.arrayBuffer();
-    const parsed = await parseRepositoryFile(buffer, file, response, sourceHash, (message) => setStatus(message, "busy"));
     const addedRecords = parsed.records.map(hydrateRecord);
     records.push(...addedRecords);
 
@@ -286,6 +303,7 @@ async function loadRepositoryData() {
   state.records = records;
   state.files = fileMetas;
   state.rowKeys = new Set(records.map((record) => record.rowKey));
+  pruneParsedFileCache(cacheKeys);
 }
 
 async function fetchRepositoryManifest() {
@@ -309,6 +327,7 @@ function normalizeManifestFiles(manifest) {
       return {
         path: cleanText(entry?.path),
         name: cleanText(entry?.name) || fileNameFromPath(entry?.path),
+        version: cleanText(entry?.version || entry?.updated || entry?.hash || entry?.revision),
         enabled: entry?.enabled !== false
       };
     })
@@ -324,6 +343,115 @@ function withCacheBust(path) {
 function fileNameFromPath(path) {
   const text = cleanText(path);
   return decodeURIComponent(text.split("/").pop() || text || "Data file");
+}
+
+async function getRepositoryFileSignature(file) {
+  if (file.version) return `manifest-version:${file.version}`;
+
+  try {
+    const response = await fetch(withCacheBust(file.path), { method: "HEAD", cache: "no-store" });
+    if (!response.ok) return "";
+
+    const etag = response.headers.get("etag") || "";
+    const lastModified = response.headers.get("last-modified") || "";
+    const contentLength = response.headers.get("content-length") || "";
+    const contentType = response.headers.get("content-type") || "";
+    return [
+      `etag:${etag}`,
+      `last-modified:${lastModified}`,
+      `content-length:${contentLength}`,
+      `content-type:${contentType}`
+    ].join("|");
+  } catch (error) {
+    console.warn(`Could not read cache signature for ${file.path}.`, error);
+    return "";
+  }
+}
+
+function getParsedFileCacheKey(file, signature) {
+  return [DATA_CACHE_VERSION, file.path, file.name, signature].join("||");
+}
+
+let parsedCacheDbPromise = null;
+
+function getParsedCacheDb() {
+  if (!("indexedDB" in window)) return Promise.resolve(null);
+  if (parsedCacheDbPromise) return parsedCacheDbPromise;
+
+  parsedCacheDbPromise = new Promise((resolve) => {
+    const request = indexedDB.open(DATA_CACHE_DB, 1);
+
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(DATA_CACHE_STORE)) {
+        db.createObjectStore(DATA_CACHE_STORE, { keyPath: "key" });
+      }
+    };
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => {
+      console.warn("Parsed data cache is unavailable.", request.error);
+      resolve(null);
+    };
+    request.onblocked = () => resolve(null);
+  });
+
+  return parsedCacheDbPromise;
+}
+
+function idbRequest(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function readCachedParsedFile(key) {
+  try {
+    const db = await getParsedCacheDb();
+    if (!db) return null;
+    const entry = await idbRequest(db.transaction(DATA_CACHE_STORE, "readonly").objectStore(DATA_CACHE_STORE).get(key));
+    return entry?.parsed || null;
+  } catch (error) {
+    console.warn("Could not read parsed data cache.", error);
+    return null;
+  }
+}
+
+async function writeCachedParsedFile(key, parsed) {
+  try {
+    const db = await getParsedCacheDb();
+    if (!db) return;
+    const transaction = db.transaction(DATA_CACHE_STORE, "readwrite");
+    transaction.objectStore(DATA_CACHE_STORE).put({
+      key,
+      parsed,
+      savedAt: new Date().toISOString()
+    });
+    await new Promise((resolve, reject) => {
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  } catch (error) {
+    console.warn("Could not write parsed data cache.", error);
+  }
+}
+
+async function pruneParsedFileCache(validKeys) {
+  try {
+    const db = await getParsedCacheDb();
+    if (!db) return;
+    const valid = new Set(validKeys);
+    const transaction = db.transaction(DATA_CACHE_STORE, "readwrite");
+    const store = transaction.objectStore(DATA_CACHE_STORE);
+    const keys = await idbRequest(store.getAllKeys());
+    keys.forEach((key) => {
+      if (!valid.has(key)) store.delete(key);
+    });
+  } catch (error) {
+    console.warn("Could not prune parsed data cache.", error);
+  }
 }
 
 async function parseRepositoryFile(buffer, file, response, sourceHash, onProgress) {
