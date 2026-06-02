@@ -104,6 +104,7 @@ const state = {
   rowKeys: new Set(),
   filters: Object.fromEntries(DIMENSIONS.map((dimension) => [dimension.key, new Set()])),
   filterSearch: {},
+  filterOpen: {},
   productSort: {
     key: "netSales",
     dir: "desc"
@@ -127,6 +128,7 @@ const compactCurrencyFormat = new Intl.NumberFormat("en-CA", { style: "currency"
 const numberFormat = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 0 });
 const percentFormat = new Intl.NumberFormat("en-CA", { style: "percent", maximumFractionDigits: 1 });
 const collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
+let filterSearchTimer = null;
 
 document.addEventListener("DOMContentLoaded", init);
 
@@ -215,6 +217,7 @@ function bindEvents() {
   dom.filters.addEventListener("input", handleFilterInput);
   dom.filters.addEventListener("change", handleFilterChange);
   dom.filters.addEventListener("click", handleFilterClick);
+  dom.filters.addEventListener("toggle", handleFilterToggle, true);
   document.addEventListener("click", handleViewTabClick);
   document.addEventListener("click", handleSettingsTabClick);
   document.addEventListener("click", handleTableSortClick);
@@ -1086,44 +1089,15 @@ function renderFilters() {
     return;
   }
 
-  const countsByDimension = {};
-  for (const dimension of DIMENSIONS) {
-    countsByDimension[dimension.key] = new Map();
-  }
-
-  for (const record of state.records) {
-    for (const dimension of DIMENSIONS) {
-      const value = record[dimension.key] || BLANK;
-      if (isHiddenFilterValue(value)) continue;
-      const counts = countsByDimension[dimension.key];
-      counts.set(value, (counts.get(value) || 0) + 1);
-    }
-  }
-
   dom.filters.innerHTML = DIMENSIONS.map((dimension, index) => {
     const selected = state.filters[dimension.key];
     removeHiddenFilterSelections(selected);
     const search = state.filterSearch[dimension.key] || "";
     const selectedLabel = selected.size ? numberFormat.format(selected.size) : "All";
-    const counts = countsByDimension[dimension.key];
-    const options = Array.from(counts.keys())
-      .filter((value) => value.toLocaleLowerCase().includes(search.toLocaleLowerCase()))
-      .sort(collator.compare)
-      .slice(0, MAX_FILTER_OPTIONS);
-
-    const optionMarkup = options.map((value) => {
-      const id = `${dimension.key}-${hashString(value)}`;
-      return `
-        <label class="filter-option" for="${id}" title="${escapeHtml(value)}">
-          <input id="${id}" type="checkbox" data-filter-option="${dimension.key}" value="${escapeHtml(value)}" ${selected.has(value) ? "checked" : ""}>
-          <span>${escapeHtml(value)}</span>
-          <em>${numberFormat.format(counts.get(value) || 0)}</em>
-        </label>
-      `;
-    }).join("");
+    const isOpen = state.filterOpen[dimension.key] ?? (index < 5 || selected.size > 0);
 
     return `
-      <details class="filter-group" ${index < 5 || selected.size ? "open" : ""}>
+      <details class="filter-group" data-filter-group="${dimension.key}" ${isOpen ? "open" : ""}>
         <summary>
           <span>${escapeHtml(dimension.label)}</span>
           <span class="filter-count">${selectedLabel}</span>
@@ -1131,23 +1105,61 @@ function renderFilters() {
         <div class="filter-body">
           <input type="search" data-filter-search="${dimension.key}" value="${escapeHtml(search)}" placeholder="Search">
           <button class="text-button" data-filter-clear="${dimension.key}" type="button">All</button>
-          <div class="filter-options">${optionMarkup || `<div class="empty-state">No matches</div>`}</div>
+          <div class="filter-options" data-filter-options="${dimension.key}">${renderFilterOptionMarkup(dimension)}</div>
         </div>
       </details>
     `;
   }).join("");
 }
 
+function renderFilterOptionMarkup(dimension) {
+  const selected = state.filters[dimension.key];
+  const search = state.filterSearch[dimension.key] || "";
+  const counts = getFilterCounts(dimension.key);
+  const options = Array.from(counts.keys())
+    .filter((value) => value.toLocaleLowerCase().includes(search.toLocaleLowerCase()))
+    .sort(collator.compare)
+    .slice(0, MAX_FILTER_OPTIONS);
+
+  const optionMarkup = options.map((value) => {
+    const id = `${dimension.key}-${hashString(value)}`;
+    return `
+      <label class="filter-option" for="${id}" title="${escapeHtml(value)}">
+        <input id="${id}" type="checkbox" data-filter-option="${dimension.key}" value="${escapeHtml(value)}" ${selected.has(value) ? "checked" : ""}>
+        <span>${escapeHtml(value)}</span>
+        <em>${numberFormat.format(counts.get(value) || 0)}</em>
+      </label>
+    `;
+  }).join("");
+
+  return optionMarkup || `<div class="empty-state">No matches</div>`;
+}
+
+function getFilterCounts(key) {
+  const counts = new Map();
+  for (const record of state.records) {
+    const value = record[key] || BLANK;
+    if (isHiddenFilterValue(value)) continue;
+    counts.set(value, (counts.get(value) || 0) + 1);
+  }
+  return counts;
+}
+
+function renderFilterOptions(key) {
+  const dimension = DIMENSIONS.find((item) => item.key === key);
+  const container = dom.filters.querySelector(`[data-filter-options="${key}"]`);
+  if (!dimension || !container) return;
+  container.innerHTML = renderFilterOptionMarkup(dimension);
+}
+
 function handleFilterInput(event) {
   const input = event.target.closest("[data-filter-search]");
   if (!input) return;
-  state.filterSearch[input.dataset.filterSearch] = input.value;
-  renderFilters();
-  const replacement = dom.filters.querySelector(`[data-filter-search="${input.dataset.filterSearch}"]`);
-  if (replacement) {
-    replacement.focus();
-    replacement.setSelectionRange(replacement.value.length, replacement.value.length);
-  }
+  const key = input.dataset.filterSearch;
+  state.filterSearch[key] = input.value;
+  state.filterOpen[key] = true;
+  window.clearTimeout(filterSearchTimer);
+  filterSearchTimer = window.setTimeout(() => renderFilterOptions(key), 120);
 }
 
 function handleFilterChange(event) {
@@ -1155,18 +1167,23 @@ function handleFilterChange(event) {
   if (!checkbox) return;
   const key = checkbox.dataset.filterOption;
   if (!state.filters[key]) state.filters[key] = new Set();
+  state.filterOpen[key] = true;
   if (checkbox.checked) {
     state.filters[key].add(checkbox.value);
   } else {
     state.filters[key].delete(checkbox.value);
   }
+  updateFilterCountLabel(key);
   renderAll();
 }
 
 function handleFilterClick(event) {
   const button = event.target.closest("[data-filter-clear]");
   if (!button) return;
-  state.filters[button.dataset.filterClear].clear();
+  const key = button.dataset.filterClear;
+  state.filters[key].clear();
+  state.filterOpen[key] = true;
+  updateFilterCountLabel(key);
   renderAll();
 }
 
@@ -1175,6 +1192,20 @@ function clearAllFilters() {
     state.filters[dimension.key].clear();
   }
   renderAll();
+}
+
+function handleFilterToggle(event) {
+  const group = event.target.closest("[data-filter-group]");
+  if (!group) return;
+  state.filterOpen[group.dataset.filterGroup] = group.open;
+}
+
+function updateFilterCountLabel(key) {
+  const group = dom.filters.querySelector(`[data-filter-group="${key}"]`);
+  const label = group?.querySelector(".filter-count");
+  if (!label) return;
+  const selected = state.filters[key];
+  label.textContent = selected?.size ? numberFormat.format(selected.size) : "All";
 }
 
 function handleTrendProductInput() {
