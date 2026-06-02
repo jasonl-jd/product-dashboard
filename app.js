@@ -1043,7 +1043,7 @@ function renderAll() {
   const compareSummary = summarize(comparison);
 
   renderKpis(currentSummary, compareSummary, hasComparison);
-  renderTrendTable(filtered);
+  renderTrendTable(current);
   state.pivotRows = buildPivot(current, comparison, hasComparison);
   state.productRows = buildProductResults(current, comparison, hasComparison);
   state.regionalProductRows = buildRegionalTopProducts(current, comparison, hasComparison);
@@ -1179,18 +1179,23 @@ function clearAllFilters() {
 
 function handleTrendProductInput() {
   state.trendProductQuery = dom.trendProductInput.value;
-  renderTrendTable(applyDimensionFilters(state.records));
+  renderTrendTable(getCurrentTrendRecords());
 }
 
 function handleTrendGrainChange() {
   state.trendGrain = dom.trendGrain.value || "week";
-  renderTrendTable(applyDimensionFilters(state.records));
+  renderTrendTable(getCurrentTrendRecords());
 }
 
 function clearTrendProduct() {
   state.trendProductQuery = "";
   dom.trendProductInput.value = "";
-  renderTrendTable(applyDimensionFilters(state.records));
+  renderTrendTable(getCurrentTrendRecords());
+}
+
+function getCurrentTrendRecords() {
+  return applyDimensionFilters(state.records)
+    .filter((record) => inDateRange(record, dom.currentStart.value, dom.currentEnd.value));
 }
 
 function renderTrendTable(filteredRecords) {
@@ -1199,7 +1204,7 @@ function renderTrendTable(filteredRecords) {
   state.trendGrain = dom.trendGrain.value || state.trendGrain || "week";
   renderTrendProductOptions(filteredRecords);
   const trendRecords = filterTrendProductRecords(filteredRecords);
-  const rows = buildTrendRows(trendRecords, state.trendGrain);
+  const rows = buildTrendRows(trendRecords, state.trendGrain, dom.currentStart.value, dom.currentEnd.value);
   const grainLabel = getTrendGrainLabel(state.trendGrain);
   dom.trendHeading.textContent = state.trendProductQuery ? `${grainLabel} Trend by Product` : `${grainLabel} Trend`;
 
@@ -1391,10 +1396,10 @@ function aggregateTrendProducts(records) {
   }));
 }
 
-function buildTrendRows(records, grain = "week") {
+function buildTrendRows(records, grain = "week", rangeStart = "", rangeEnd = "") {
   const map = new Map();
   for (const record of records) {
-    const bucket = getTrendBucketForDateKey(record.dateKey, grain);
+    const bucket = getTrendBucketForDateKey(record.dateKey, grain, rangeStart, rangeEnd);
     if (!bucket) continue;
     if (!map.has(bucket.start)) {
       map.set(bucket.start, {
@@ -1432,7 +1437,7 @@ function buildWeeklyTrendRows(records) {
   return buildTrendRows(records, "week");
 }
 
-function getTrendBucketForDateKey(key, grain) {
+function getTrendBucketForDateKey(key, grain, rangeStart = "", rangeEnd = "") {
   if (!key) return null;
   if (grain === "day") {
     return {
@@ -1446,20 +1451,35 @@ function getTrendBucketForDateKey(key, grain) {
     const [year, month] = key.split("-").map(Number);
     const start = `${year}-${String(month).padStart(2, "0")}-01`;
     const end = dateKey(new Date(Date.UTC(year, month, 0)));
+    const display = clampTrendBucketRange(start, end, rangeStart, rangeEnd);
     return {
       start,
       end,
-      label: `${year}-${String(month).padStart(2, "0")}`
+      label: display.start === start && display.end === end
+        ? `${year}-${String(month).padStart(2, "0")}`
+        : `${display.start} to ${display.end}`
     };
   }
 
   const date = dateFromKey(key);
   const start = addDays(date, -date.getUTCDay());
   const end = addDays(start, 6);
+  const bucketStart = dateKey(start);
+  const bucketEnd = dateKey(end);
+  const display = clampTrendBucketRange(bucketStart, bucketEnd, rangeStart, rangeEnd);
   return {
-    start: dateKey(start),
-    end: dateKey(end),
-    label: `${dateKey(start)} to ${dateKey(end)}`
+    start: bucketStart,
+    end: bucketEnd,
+    label: `${display.start} to ${display.end}`
+  };
+}
+
+function clampTrendBucketRange(start, end, rangeStart, rangeEnd) {
+  const displayStart = rangeStart && rangeStart > start ? rangeStart : start;
+  const displayEnd = rangeEnd && rangeEnd < end ? rangeEnd : end;
+  return {
+    start: displayStart,
+    end: displayEnd
   };
 }
 
