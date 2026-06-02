@@ -128,6 +128,38 @@
 
         <section class="dashboard-view active" data-view-panel="performance" role="tabpanel">
           <div class="analysis-stack">
+            <section class="panel table-panel trend-panel">
+              <div class="panel-head panel-head-with-control">
+                <div>
+                  <span class="panel-kicker">Trend</span>
+                  <h2 id="trend-heading">Weekly Trend</h2>
+                </div>
+                <div class="trend-controls">
+                  <label class="trend-product-control">
+                    <span>Product</span>
+                    <input id="trend-product-input" type="search" list="trend-product-options" placeholder="Product or SKU">
+                    <datalist id="trend-product-options"></datalist>
+                  </label>
+                  <button id="clear-trend-product" class="button compact" type="button">Clear</button>
+                </div>
+              </div>
+              <div class="table-scroll trend-scroll">
+                <table class="trend-table">
+                  <thead>
+                    <tr>
+                      <th>Week</th>
+                      <th>Net Sales</th>
+                      <th>Sales Change</th>
+                      <th>Net Units</th>
+                      <th>Units Change</th>
+                      <th>Orders</th>
+                    </tr>
+                  </thead>
+                  <tbody id="trend-tbody"></tbody>
+                </table>
+              </div>
+            </section>
+
             <section class="panel table-panel pivot-main">
               <div class="panel-head">
                 <div>

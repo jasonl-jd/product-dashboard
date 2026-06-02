@@ -81,6 +81,7 @@ const PRODUCT_COLUMN_DEFS = [
   { key: "netUnits", label: "Net Units Sold", numeric: true },
   { key: "salesShare", label: "% Sales", numeric: true },
   { key: "change", label: "Sales Change", numeric: true },
+  { key: "unitChange", label: "Units Change", numeric: true },
   { key: "changePct", label: "Change %", numeric: true }
 ];
 
@@ -107,6 +108,7 @@ const state = {
   pivotRows: [],
   productRows: [],
   regionalProductRows: [],
+  trendProductQuery: "",
   columnOrders: {
     pivot: [],
     product: []
@@ -161,6 +163,11 @@ function collectDom() {
     chartHeading: document.querySelector("#chart-heading"),
     activeDimension: document.querySelector("#active-dimension"),
     barChart: document.querySelector("#bar-chart"),
+    trendHeading: document.querySelector("#trend-heading"),
+    trendProductInput: document.querySelector("#trend-product-input"),
+    trendProductOptions: document.querySelector("#trend-product-options"),
+    clearTrendProduct: document.querySelector("#clear-trend-product"),
+    trendTbody: document.querySelector("#trend-tbody"),
     fileTbody: document.querySelector("#file-tbody"),
     pivotHeading: document.querySelector("#pivot-heading"),
     pivotThead: document.querySelector("#pivot-thead"),
@@ -188,6 +195,8 @@ function bindEvents() {
   dom.exportCsv.addEventListener("click", exportPivotCsv);
   dom.exportProductCsv.addEventListener("click", exportProductCsv);
   dom.clearFilters.addEventListener("click", clearAllFilters);
+  dom.trendProductInput.addEventListener("input", handleTrendProductInput);
+  dom.clearTrendProduct.addEventListener("click", clearTrendProduct);
 
   [dom.currentStart, dom.currentEnd, dom.compareStart, dom.compareEnd].forEach((input) => {
     input.addEventListener("change", () => {
@@ -340,7 +349,16 @@ function normalizeColumnOrder(table, order) {
   const validKeys = new Set(defaults);
   const normalized = order.filter((key, index) => validKeys.has(key) && order.indexOf(key) === index);
   defaults.forEach((key) => {
-    if (!normalized.includes(key)) normalized.push(key);
+    if (normalized.includes(key)) return;
+    let insertAt = normalized.length;
+    for (let index = defaults.indexOf(key) - 1; index >= 0; index -= 1) {
+      const previousIndex = normalized.indexOf(defaults[index]);
+      if (previousIndex >= 0) {
+        insertAt = previousIndex + 1;
+        break;
+      }
+    }
+    normalized.splice(insertAt, 0, key);
   });
   return normalized;
 }
@@ -1018,6 +1036,7 @@ function renderAll() {
   const compareSummary = summarize(comparison);
 
   renderKpis(currentSummary, compareSummary, hasComparison);
+  renderTrendTable(filtered);
   state.pivotRows = buildPivot(current, comparison, hasComparison);
   state.productRows = buildProductResults(current, comparison, hasComparison);
   state.regionalProductRows = buildRegionalTopProducts(current, comparison, hasComparison);
@@ -1149,6 +1168,151 @@ function clearAllFilters() {
     state.filters[dimension.key].clear();
   }
   renderAll();
+}
+
+function handleTrendProductInput() {
+  state.trendProductQuery = dom.trendProductInput.value;
+  renderTrendTable(applyDimensionFilters(state.records));
+}
+
+function clearTrendProduct() {
+  state.trendProductQuery = "";
+  dom.trendProductInput.value = "";
+  renderTrendTable(applyDimensionFilters(state.records));
+}
+
+function renderTrendTable(filteredRecords) {
+  if (!dom.trendTbody) return;
+
+  renderTrendProductOptions(filteredRecords);
+  const trendRecords = filterTrendProductRecords(filteredRecords);
+  const rows = buildWeeklyTrendRows(trendRecords);
+  dom.trendHeading.textContent = state.trendProductQuery ? "Weekly Trend by Product" : "Weekly Trend";
+
+  if (!rows.length) {
+    dom.trendTbody.innerHTML = `<tr><td colspan="6">No weekly trend results</td></tr>`;
+    return;
+  }
+
+  const maxSales = Math.max(...rows.map((row) => Math.abs(row.netSales)), 1);
+  dom.trendTbody.innerHTML = rows.map((row) => {
+    const width = Math.max(2, Math.abs(row.netSales) / maxSales * 100);
+    return `
+      <tr>
+        <td><div class="clip" title="${escapeHtml(row.weekLabel)}">${escapeHtml(row.weekLabel)}</div></td>
+        <td class="numeric trend-sales-cell">
+          <span>${formatCurrency(row.netSales)}</span>
+          <span class="trend-bar-track" aria-hidden="true"><span class="trend-bar-fill ${row.netSales < 0 ? "negative" : ""}" style="--bar-width:${width.toFixed(2)}%"></span></span>
+        </td>
+        <td class="numeric ${row.salesChange > 0 ? "delta-positive" : row.salesChange < 0 ? "delta-negative" : ""}">${row.salesChange === null ? "" : formatCurrency(row.salesChange)}</td>
+        <td class="numeric">${formatNumber(row.netUnits)}</td>
+        <td class="numeric ${row.unitsChange > 0 ? "delta-positive" : row.unitsChange < 0 ? "delta-negative" : ""}">${row.unitsChange === null ? "" : formatNumber(row.unitsChange)}</td>
+        <td class="numeric">${formatNumber(row.orders)}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function renderTrendProductOptions(records) {
+  if (!dom.trendProductOptions) return;
+  const query = cleanText(dom.trendProductInput.value);
+  const products = aggregateTrendProducts(records)
+    .filter((product) => !query || product.optionLabel.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
+    .sort((a, b) => b.netSales - a.netSales || collator.compare(a.optionLabel, b.optionLabel))
+    .slice(0, 120);
+
+  dom.trendProductOptions.innerHTML = products.map((product) => `
+    <option value="${escapeHtml(product.optionLabel)}"></option>
+  `).join("");
+}
+
+function filterTrendProductRecords(records) {
+  const query = cleanText(state.trendProductQuery);
+  if (!query) return records;
+
+  const products = aggregateTrendProducts(records);
+  const exact = resolveTrendProduct(query, products);
+  if (exact) return records.filter((record) => getProductKey(record) === exact.productKey);
+
+  const normalizedQuery = query.toLocaleLowerCase();
+  const normalizedSkuQuery = normalizeSkuKey(query);
+  return records.filter((record) => {
+    const displaySku = formatDisplaySku(record.sku).toLocaleLowerCase();
+    const rawSku = cleanText(record.sku).toLocaleLowerCase();
+    const skuKey = normalizeSkuKey(record.sku);
+    const title = cleanText(record.productTitle).toLocaleLowerCase();
+    return title.includes(normalizedQuery)
+      || displaySku.includes(normalizedQuery)
+      || rawSku.includes(normalizedQuery)
+      || (normalizedSkuQuery && skuKey.includes(normalizedSkuQuery));
+  });
+}
+
+function resolveTrendProduct(query, products) {
+  const normalizedQuery = cleanText(query).toLocaleLowerCase();
+  const skuQuery = normalizeSkuKey(query);
+  return products.find((product) => {
+    return product.optionLabel.toLocaleLowerCase() === normalizedQuery
+      || product.productTitle.toLocaleLowerCase() === normalizedQuery
+      || product.sku.toLocaleLowerCase() === normalizedQuery
+      || normalizeSkuKey(product.sku) === skuQuery;
+  }) || null;
+}
+
+function aggregateTrendProducts(records) {
+  const products = Array.from(aggregateProducts(records).values());
+  return products.map((product) => ({
+    ...product,
+    optionLabel: `${product.sku} | ${product.productTitle}`
+  }));
+}
+
+function buildWeeklyTrendRows(records) {
+  const map = new Map();
+  for (const record of records) {
+    const week = getWeekRangeForDateKey(record.dateKey);
+    if (!week) continue;
+    if (!map.has(week.start)) {
+      map.set(week.start, {
+        weekStart: week.start,
+        weekEnd: week.end,
+        weekLabel: `${week.start} to ${week.end}`,
+        netSales: 0,
+        netUnits: 0,
+        orders: new Set(),
+        salesChange: null,
+        unitsChange: null
+      });
+    }
+
+    const row = map.get(week.start);
+    row.netSales += record.netSales;
+    row.netUnits += record.netUnits;
+    if (record.orderKey) row.orders.add(record.orderKey);
+  }
+
+  const chronological = Array.from(map.values()).sort((a, b) => collator.compare(a.weekStart, b.weekStart));
+  chronological.forEach((row, index) => {
+    const previous = chronological[index - 1];
+    row.orders = row.orders.size;
+    if (previous) {
+      row.salesChange = row.netSales - previous.netSales;
+      row.unitsChange = row.netUnits - previous.netUnits;
+    }
+  });
+
+  return chronological.reverse();
+}
+
+function getWeekRangeForDateKey(key) {
+  if (!key) return null;
+  const date = dateFromKey(key);
+  const start = addDays(date, -date.getUTCDay());
+  const end = addDays(start, 6);
+  return {
+    start: dateKey(start),
+    end: dateKey(end)
+  };
 }
 
 function buildPivot(currentRecords, comparisonRecords, hasComparison) {
@@ -1337,9 +1501,11 @@ function formatPivotCellValue(row, key) {
 }
 
 function getDeltaClass(row, key) {
-  if ((key !== "change" && key !== "changePct") || !row.hasComparison) return "";
-  if (row.change > 0) return "delta-positive";
-  if (row.change < 0) return "delta-negative";
+  if (!row.hasComparison) return "";
+  const value = key === "unitChange" ? row.unitChange : row.change;
+  if (key !== "change" && key !== "changePct" && key !== "unitChange") return "";
+  if (value > 0) return "delta-positive";
+  if (value < 0) return "delta-negative";
   return "";
 }
 
@@ -1355,6 +1521,7 @@ function buildProductResults(records, comparisonRecords = [], hasComparison = fa
       const comparison = compareMap.get(key) || emptyProduct();
       const displayProduct = currentMap.get(key) || compareMap.get(key) || emptyProduct();
       const change = hasComparison ? current.netSales - comparison.netSales : null;
+      const unitChange = hasComparison ? current.netUnits - comparison.netUnits : null;
 
       return {
         ...displayProduct,
@@ -1363,7 +1530,9 @@ function buildProductResults(records, comparisonRecords = [], hasComparison = fa
         salesShare: totalSales ? current.netSales / totalSales : 0,
         hasComparison,
         compareSales: hasComparison ? comparison.netSales : null,
+        compareUnits: hasComparison ? comparison.netUnits : null,
         change,
+        unitChange,
         changePct: hasComparison ? percentChange(current.netSales, comparison.netSales) : null
       };
     })
@@ -1506,7 +1675,9 @@ function renderProductTable(rows) {
   const totalUnits = sum(sortedRows, "netUnits");
   const hasComparison = sortedRows.some((row) => row.hasComparison);
   const totalCompareSales = hasComparison ? sum(sortedRows, "compareSales") : 0;
+  const totalCompareUnits = hasComparison ? sum(sortedRows, "compareUnits") : 0;
   const totalChange = hasComparison ? totalSales - totalCompareSales : null;
+  const totalUnitChange = hasComparison ? totalUnits - totalCompareUnits : null;
   const totalChangePct = hasComparison ? percentChange(totalSales, totalCompareSales) : null;
   const suffix = sortedRows.length === 1 ? "product" : "products";
   dom.productHeading.textContent = `Product Results (${numberFormat.format(rows.length)} ${suffix})`;
@@ -1526,7 +1697,7 @@ function renderProductTable(rows) {
 
   bodyRows.push(`
     <tr class="total-row">
-      ${columns.map((column) => renderProductTotalCell(column, { totalSales, totalUnits, hasComparison, totalChange, totalChangePct })).join("")}
+      ${columns.map((column) => renderProductTotalCell(column, { totalSales, totalUnits, hasComparison, totalChange, totalUnitChange, totalChangePct })).join("")}
     </tr>
   `);
 
@@ -1547,6 +1718,7 @@ function formatProductCellValue(row, key) {
   if (key === "netUnits") return formatNumber(row.netUnits);
   if (key === "salesShare") return formatPercent(row.salesShare);
   if (key === "change") return row.hasComparison ? formatCurrency(row.change) : "";
+  if (key === "unitChange") return row.hasComparison ? formatNumber(row.unitChange) : "";
   if (key === "changePct") return row.hasComparison ? (row.changePct === null ? "n/a" : formatPercent(row.changePct)) : "";
   return "";
 }
@@ -1560,6 +1732,7 @@ function renderProductTotalCell(column, totals) {
   if (column.key === "netUnits") value = formatNumber(totals.totalUnits);
   if (column.key === "salesShare") value = formatPercent(totals.totalSales ? 1 : 0);
   if (column.key === "change") value = totals.hasComparison ? formatCurrency(totals.totalChange) : "";
+  if (column.key === "unitChange") value = totals.hasComparison ? formatNumber(totals.totalUnitChange) : "";
   if (column.key === "changePct") value = totals.hasComparison ? (totals.totalChangePct === null ? "n/a" : formatPercent(totals.totalChangePct)) : "";
   return `<td class="numeric">${value}</td>`;
 }
@@ -1790,6 +1963,7 @@ function getProductExportValue(row, key) {
   if (key === "netUnits") return row.netUnits;
   if (key === "salesShare") return row.salesShare;
   if (key === "change") return row.hasComparison ? row.change : "";
+  if (key === "unitChange") return row.hasComparison ? row.unitChange : "";
   if (key === "changePct") return row.hasComparison ? (row.changePct === null ? "n/a" : row.changePct) : "";
   return "";
 }

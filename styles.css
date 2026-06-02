@@ -556,6 +556,17 @@ select:focus {
   width: min(180px, 38vw);
 }
 
+.trend-controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.trend-product-control {
+  min-width: 0;
+}
+
 .pill {
   max-width: 220px;
   overflow: hidden;
@@ -635,6 +646,10 @@ select:focus {
 
 .table-scroll.tight {
   max-height: 418px;
+}
+
+.trend-scroll {
+  max-height: 360px;
 }
 
 .pivot-scroll {
@@ -764,6 +779,41 @@ th.numeric {
   max-width: 130px;
 }
 
+.trend-table td:first-child {
+  min-width: 172px;
+  max-width: 220px;
+}
+
+.trend-sales-cell {
+  min-width: 150px;
+}
+
+.trend-sales-cell > span:first-child {
+  display: block;
+}
+
+.trend-bar-track {
+  display: block;
+  width: 100%;
+  height: 6px;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.trend-bar-fill {
+  display: block;
+  width: var(--bar-width, 0%);
+  height: 100%;
+  border-radius: inherit;
+  background: var(--green);
+}
+
+.trend-bar-fill.negative {
+  background: var(--red);
+}
+
 .rank-change {
   font-weight: 840;
 }
@@ -799,7 +849,7 @@ th.numeric {
 }
 
 .product-table {
-  min-width: 1020px;
+  min-width: 1120px;
 }
 
 .product-table th,
@@ -1026,6 +1076,11 @@ th.numeric {
   }
 
   .column-order-row {
+    grid-template-columns: 1fr;
+  }
+
+  .trend-controls {
+    width: 100%;
     grid-template-columns: 1fr;
   }
 
