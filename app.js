@@ -146,6 +146,7 @@ function collectDom() {
     sortDir: document.querySelector("#sort-dir"),
     rowLimit: document.querySelector("#row-limit"),
     exportCsv: document.querySelector("#export-csv"),
+    exportProductCsv: document.querySelector("#export-product-csv"),
     clearFilters: document.querySelector("#clear-filters"),
     filters: document.querySelector("#filters"),
     status: document.querySelector("#status"),
@@ -185,6 +186,7 @@ function bindEvents() {
   dom.rowLimit.addEventListener("change", renderAll);
   dom.regionalProductSort.addEventListener("change", renderAll);
   dom.exportCsv.addEventListener("click", exportPivotCsv);
+  dom.exportProductCsv.addEventListener("click", exportProductCsv);
   dom.clearFilters.addEventListener("click", clearAllFilters);
 
   [dom.currentStart, dom.currentEnd, dom.compareStart, dom.compareEnd].forEach((input) => {
@@ -1018,7 +1020,7 @@ function renderAll() {
   renderKpis(currentSummary, compareSummary, hasComparison);
   state.pivotRows = buildPivot(current, comparison, hasComparison);
   state.productRows = buildProductResults(current, comparison, hasComparison);
-  state.regionalProductRows = buildRegionalTopProducts(current);
+  state.regionalProductRows = buildRegionalTopProducts(current, comparison, hasComparison);
   renderChart(state.pivotRows);
   renderFiles();
   renderPivotTable(state.pivotRows);
@@ -1376,6 +1378,7 @@ function aggregateProducts(records) {
     const key = getProductKey(record);
     if (!map.has(key)) {
       map.set(key, {
+        productKey: key,
         sku,
         productTitle: title,
         status: BLANK,
@@ -1451,6 +1454,7 @@ function formatDisplaySku(value) {
 
 function emptyProduct() {
   return {
+    productKey: "",
     sku: BLANK,
     productTitle: BLANK,
     status: "",
@@ -1560,26 +1564,53 @@ function renderProductTotalCell(column, totals) {
   return `<td class="numeric">${value}</td>`;
 }
 
-function buildRegionalTopProducts(records) {
+function buildRegionalTopProducts(records, comparisonRecords = [], hasComparison = false) {
   const sortKey = dom.regionalProductSort?.value === "netUnits" ? "netUnits" : "netSales";
   const rows = [];
 
   for (const region of REGION_DEFS) {
     const regionalRecords = records.filter((record) => record.region === region.label);
+    const regionalComparisonRecords = hasComparison
+      ? comparisonRecords.filter((record) => record.region === region.label)
+      : [];
+    const comparisonProducts = hasComparison
+      ? buildProductResults(regionalComparisonRecords)
+        .sort((a, b) => sortRegionalProducts(a, b, sortKey))
+        .slice(0, 20)
+      : [];
+    const comparisonRanks = new Map(comparisonProducts.map((product, index) => [product.productKey, index + 1]));
     const products = buildProductResults(regionalRecords)
       .sort((a, b) => sortRegionalProducts(a, b, sortKey))
       .slice(0, 20);
 
     products.forEach((product, index) => {
+      const rank = index + 1;
+      const comparisonRank = comparisonRanks.get(product.productKey) || null;
       rows.push({
         region: region.label,
-        rank: index + 1,
+        rank,
+        rankChange: getRankChangeLabel(rank, comparisonRank, hasComparison),
         ...product
       });
     });
   }
 
   return rows;
+}
+
+function getRankChangeLabel(currentRank, comparisonRank, hasComparison) {
+  if (!hasComparison) return "";
+  if (!comparisonRank) return "NEW";
+  const movement = comparisonRank - currentRank;
+  if (movement === 0) return "0";
+  return movement > 0 ? `+${movement}` : String(movement);
+}
+
+function getRankChangeClass(value) {
+  if (value === "NEW") return "rank-new";
+  if (String(value).startsWith("+")) return "rank-up";
+  if (String(value).startsWith("-")) return "rank-down";
+  return "";
 }
 
 function sortRegionalProducts(a, b, sortKey) {
@@ -1594,7 +1625,7 @@ function renderRegionalTopProducts(rows) {
   if (!dom.regionalProductsTbody) return;
 
   if (!rows.length) {
-    dom.regionalProductsTbody.innerHTML = `<tr><td colspan="6">No regional product results for the selected period and filters</td></tr>`;
+    dom.regionalProductsTbody.innerHTML = `<tr><td colspan="7">No regional product results for the selected period and filters</td></tr>`;
     return;
   }
 
@@ -1602,6 +1633,7 @@ function renderRegionalTopProducts(rows) {
     <tr>
       <td>${escapeHtml(row.region)}</td>
       <td class="numeric">${numberFormat.format(row.rank)}</td>
+      <td class="numeric rank-change ${getRankChangeClass(row.rankChange)}">${escapeHtml(row.rankChange)}</td>
       <td><div class="clip" title="${escapeHtml(row.productTitle)}">${escapeHtml(row.productTitle)}</div></td>
       <td><div class="clip" title="${escapeHtml(row.sku)}">${escapeHtml(row.sku)}</div></td>
       <td class="numeric">${formatCurrency(row.netSales)}</td>
@@ -1650,10 +1682,21 @@ function hasComparisonPeriod() {
 function ensureDateDefaults(force = false) {
   const summary = getDatasetDateSummary();
   if (!summary) return;
+  const latestWeek = getLatestUploadedWeekRange(summary.max);
 
-  if (force || !dom.currentStart.value) dom.currentStart.value = summary.min;
-  if (force || !dom.currentEnd.value) dom.currentEnd.value = summary.max;
+  if (force || !dom.currentStart.value) dom.currentStart.value = latestWeek.start;
+  if (force || !dom.currentEnd.value) dom.currentEnd.value = latestWeek.end;
   if (force || !dom.compareStart.value || !dom.compareEnd.value) setPreviousPeriod(false);
+}
+
+function getLatestUploadedWeekRange(maxDateKey) {
+  const latest = dateFromKey(maxDateKey);
+  const start = addDays(latest, -latest.getUTCDay());
+  const end = addDays(start, 6);
+  return {
+    start: dateKey(start),
+    end: dateKey(end)
+  };
 }
 
 function setAllDates() {
@@ -1713,6 +1756,19 @@ function exportPivotCsv() {
   downloadFile(`pivot-${dimension.key}-${todayKey()}.csv`, lines.map(csvLine).join("\n"), "text/csv");
 }
 
+function exportProductCsv() {
+  const columns = getTableColumns("product");
+  const rows = sortProductRows(state.productRows);
+  const headers = columns.map((column) => column.label);
+  const lines = [
+    headers,
+    ...rows.map((row) => columns.map((column) => getProductExportValue(row, column.key)))
+  ];
+  const start = dom.currentStart.value || "all";
+  const end = dom.currentEnd.value || todayKey();
+  downloadFile(`product-results-${start}-to-${end}.csv`, lines.map(csvLine).join("\n"), "text/csv");
+}
+
 function getPivotExportValue(row, key) {
   if (key === "value") return row.value;
   if (key === "status") return row.status;
@@ -1721,6 +1777,18 @@ function getPivotExportValue(row, key) {
   if (key === "netUnits") return row.netUnits;
   if (key === "unitsShare") return row.unitsShare;
   if (key === "compareSales") return row.hasComparison ? row.compareSales : "";
+  if (key === "change") return row.hasComparison ? row.change : "";
+  if (key === "changePct") return row.hasComparison ? (row.changePct === null ? "n/a" : row.changePct) : "";
+  return "";
+}
+
+function getProductExportValue(row, key) {
+  if (key === "productTitle") return row.productTitle;
+  if (key === "sku") return row.sku;
+  if (key === "status") return row.status;
+  if (key === "netSales") return row.netSales;
+  if (key === "netUnits") return row.netUnits;
+  if (key === "salesShare") return row.salesShare;
   if (key === "change") return row.hasComparison ? row.change : "";
   if (key === "changePct") return row.hasComparison ? (row.changePct === null ? "n/a" : row.changePct) : "";
   return "";

@@ -749,7 +749,7 @@ th.numeric {
 }
 
 .pivot-table td:first-child,
-.regional-product-table td:nth-child(3),
+.regional-product-table td:nth-child(4),
 .product-table td:first-child,
 .file-table td:first-child {
   min-width: 180px;
@@ -760,8 +760,21 @@ th.numeric {
   min-width: 110px;
 }
 
-.regional-product-table td:nth-child(4) {
+.regional-product-table td:nth-child(5) {
   max-width: 130px;
+}
+
+.rank-change {
+  font-weight: 840;
+}
+
+.rank-up,
+.rank-new {
+  color: var(--green);
+}
+
+.rank-down {
+  color: var(--red);
 }
 
 .product-table td:nth-child(2) {
