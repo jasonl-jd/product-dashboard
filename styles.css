@@ -207,12 +207,13 @@ button {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
-  gap: 20px;
+  grid-template-columns: 300px minmax(360px, 1fr) minmax(520px, 38vw);
+  gap: 18px;
   width: 100%;
   max-width: none;
   margin: 0 auto;
   padding: 20px 24px 28px;
+  align-items: start;
 }
 
 .controls {
@@ -425,13 +426,6 @@ select:focus {
   display: none;
 }
 
-.workspace-grid {
-  display: grid;
-  grid-template-columns: minmax(420px, 1fr) minmax(760px, 54vw);
-  gap: 18px;
-  align-items: start;
-}
-
 .analysis-stack {
   display: grid;
   gap: 18px;
@@ -465,7 +459,7 @@ select:focus {
 
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
   gap: 14px;
 }
 
@@ -643,8 +637,14 @@ select:focus {
   max-height: 418px;
 }
 
+.pivot-scroll {
+  max-height: min(58vh, 680px);
+}
+
 .product-scroll {
-  max-height: calc(100vh - 258px);
+  min-height: 0;
+  height: 100%;
+  max-height: none;
 }
 
 .regional-scroll {
@@ -652,7 +652,7 @@ select:focus {
 }
 
 .shared-data-scroll {
-  max-height: calc(100vh - 240px);
+  max-height: calc(100vh - 340px);
 }
 
 table {
@@ -694,6 +694,10 @@ th button {
   font: inherit;
   text-transform: inherit;
   letter-spacing: inherit;
+}
+
+th.numeric button {
+  justify-content: flex-end;
 }
 
 th button.active {
@@ -768,11 +772,12 @@ th.numeric {
   position: sticky;
   top: 88px;
   align-self: start;
-  min-width: 760px;
-  width: min(54vw, 1040px);
-  max-width: calc(100vw - 390px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 520px;
+  height: calc(100vh - 112px);
   max-height: calc(100vh - 112px);
-  overflow: auto;
+  overflow: hidden;
   resize: horizontal;
 }
 
@@ -823,6 +828,92 @@ th.numeric {
   width: 126px;
 }
 
+.settings-panel {
+  overflow: hidden;
+}
+
+.settings-tabs {
+  display: inline-flex;
+  width: fit-content;
+  max-width: calc(100% - 32px);
+  gap: 4px;
+  margin: 16px 16px 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px;
+  background: var(--surface-2);
+}
+
+.settings-tab {
+  min-height: 34px;
+  border: 0;
+  border-radius: 5px;
+  padding: 8px 12px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 860;
+}
+
+.settings-tab.active {
+  background: var(--green);
+  color: var(--black);
+}
+
+.settings-view {
+  padding: 16px;
+}
+
+.settings-view[hidden] {
+  display: none;
+}
+
+.settings-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.column-order-list {
+  display: grid;
+  gap: 8px;
+  max-width: 680px;
+}
+
+.column-order-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 48px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: var(--surface-2);
+}
+
+.column-order-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 820;
+}
+
+.column-order-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
 .total-row td {
   position: sticky;
   bottom: 0;
@@ -856,11 +947,10 @@ th.numeric {
   font-weight: 760;
 }
 
-@media (max-width: 1120px) {
+@media (max-width: 1280px) {
   .topbar,
   .app-shell,
-  .visual-grid,
-  .workspace-grid {
+  .visual-grid {
     grid-template-columns: 1fr;
   }
 
@@ -879,12 +969,14 @@ th.numeric {
     min-width: 0;
     width: auto;
     max-width: none;
+    height: auto;
     max-height: none;
     resize: none;
   }
 
   .product-scroll {
     max-height: 620px;
+    height: auto;
   }
 }
 
@@ -907,8 +999,21 @@ th.numeric {
     width: 100%;
   }
 
+  .settings-tabs {
+    display: grid;
+    width: calc(100% - 28px);
+    max-width: none;
+    grid-template-columns: 1fr;
+    margin-right: 14px;
+    margin-left: 14px;
+  }
+
   .tab-button {
     flex: 1;
+  }
+
+  .column-order-row {
+    grid-template-columns: 1fr;
   }
 
   .bar-row {

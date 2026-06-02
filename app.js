@@ -61,6 +61,39 @@ const SORTERS = {
   changePct: (row) => row.changePct ?? Number.NEGATIVE_INFINITY
 };
 
+const PIVOT_COLUMN_DEFS = [
+  { key: "value", label: "Name" },
+  { key: "status", label: "Status" },
+  { key: "netSales", label: "Net Sales", numeric: true },
+  { key: "salesShare", label: "% Sales", numeric: true },
+  { key: "netUnits", label: "Net Units", numeric: true },
+  { key: "unitsShare", label: "% Units", numeric: true },
+  { key: "compareSales", label: "Compare Sales", numeric: true },
+  { key: "change", label: "Change", numeric: true },
+  { key: "changePct", label: "Change %", numeric: true }
+];
+
+const PRODUCT_COLUMN_DEFS = [
+  { key: "productTitle", label: "Product" },
+  { key: "sku", label: "SKU" },
+  { key: "status", label: "Status" },
+  { key: "netSales", label: "Net Sales", numeric: true },
+  { key: "netUnits", label: "Net Units Sold", numeric: true },
+  { key: "salesShare", label: "% Sales", numeric: true },
+  { key: "change", label: "Sales Change", numeric: true },
+  { key: "changePct", label: "Change %", numeric: true }
+];
+
+const COLUMN_DEFS_BY_TABLE = {
+  pivot: PIVOT_COLUMN_DEFS,
+  product: PRODUCT_COLUMN_DEFS
+};
+
+const DEFAULT_COLUMN_ORDERS = {
+  pivot: PIVOT_COLUMN_DEFS.map((column) => column.key),
+  product: PRODUCT_COLUMN_DEFS.map((column) => column.key)
+};
+
 const state = {
   records: [],
   files: [],
@@ -74,13 +107,16 @@ const state = {
   pivotRows: [],
   productRows: [],
   regionalProductRows: [],
+  columnOrders: {
+    pivot: [],
+    product: []
+  },
   dateTouched: false,
   loading: false
 };
 
 const dom = {};
 const currencyFormat = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 });
-const currencyPreciseFormat = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 2 });
 const numberFormat = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 0 });
 const percentFormat = new Intl.NumberFormat("en-CA", { style: "percent", maximumFractionDigits: 1 });
 const collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
@@ -89,7 +125,9 @@ document.addEventListener("DOMContentLoaded", init);
 
 async function init() {
   collectDom();
+  initializeColumnOrders();
   populateDimensionSelect();
+  renderColumnSettings();
   bindEvents();
   await refreshRepositoryData({ preserveDates: false });
 }
@@ -119,16 +157,18 @@ function collectDom() {
     kpiUnitsDelta: document.querySelector("#kpi-units-delta"),
     kpiOrders: document.querySelector("#kpi-orders"),
     kpiOrdersDelta: document.querySelector("#kpi-orders-delta"),
-    kpiAur: document.querySelector("#kpi-aur"),
-    kpiAurDelta: document.querySelector("#kpi-aur-delta"),
     chartHeading: document.querySelector("#chart-heading"),
     activeDimension: document.querySelector("#active-dimension"),
     barChart: document.querySelector("#bar-chart"),
     fileTbody: document.querySelector("#file-tbody"),
     pivotHeading: document.querySelector("#pivot-heading"),
+    pivotThead: document.querySelector("#pivot-thead"),
     pivotTbody: document.querySelector("#pivot-tbody"),
     productHeading: document.querySelector("#product-heading"),
+    productThead: document.querySelector("#product-thead"),
     productTbody: document.querySelector("#product-tbody"),
+    pivotColumnList: document.querySelector("#pivot-column-list"),
+    productColumnList: document.querySelector("#product-column-list"),
     regionalProductSort: document.querySelector("#regional-product-sort"),
     regionalProductsTbody: document.querySelector("#regional-products-tbody"),
     viewTabs: document.querySelector(".view-tabs")
@@ -158,7 +198,9 @@ function bindEvents() {
   dom.filters.addEventListener("change", handleFilterChange);
   dom.filters.addEventListener("click", handleFilterClick);
   document.addEventListener("click", handleViewTabClick);
+  document.addEventListener("click", handleSettingsTabClick);
   document.addEventListener("click", handleTableSortClick);
+  document.addEventListener("click", handleColumnOrderClick);
 
 }
 
@@ -174,6 +216,23 @@ function handleViewTabClick(event) {
   });
   document.querySelectorAll("[data-view-panel]").forEach((panel) => {
     const isActive = panel.dataset.viewPanel === view;
+    panel.classList.toggle("active", isActive);
+    panel.hidden = !isActive;
+  });
+}
+
+function handleSettingsTabClick(event) {
+  const button = event.target.closest("[data-settings-tab]");
+  if (!button) return;
+
+  const panelName = button.dataset.settingsTab;
+  document.querySelectorAll("[data-settings-tab]").forEach((tab) => {
+    const isActive = tab.dataset.settingsTab === panelName;
+    tab.classList.toggle("active", isActive);
+    tab.setAttribute("aria-selected", String(isActive));
+  });
+  document.querySelectorAll("[data-settings-panel]").forEach((panel) => {
+    const isActive = panel.dataset.settingsPanel === panelName;
     panel.classList.toggle("active", isActive);
     panel.hidden = !isActive;
   });
@@ -208,6 +267,19 @@ function handleTableSortClick(event) {
   }
 }
 
+function handleColumnOrderClick(event) {
+  const moveButton = event.target.closest("[data-column-move]");
+  if (moveButton) {
+    moveColumn(moveButton.dataset.columnTable, moveButton.dataset.columnKey, moveButton.dataset.columnMove);
+    return;
+  }
+
+  const resetButton = event.target.closest("[data-column-reset]");
+  if (resetButton) {
+    resetColumnOrder(resetButton.dataset.columnReset);
+  }
+}
+
 function updateSortHeaderStates() {
   document.querySelectorAll("[data-table-sort]").forEach((button) => {
     const table = button.dataset.tableSort;
@@ -231,6 +303,96 @@ function populateDimensionSelect() {
   dom.dimensionSelect.innerHTML = DIMENSIONS
     .map((dimension) => `<option value="${dimension.key}">${escapeHtml(dimension.label)}</option>`)
     .join("");
+}
+
+function initializeColumnOrders() {
+  state.columnOrders.pivot = loadColumnOrder("pivot");
+  state.columnOrders.product = loadColumnOrder("product");
+}
+
+function loadColumnOrder(table) {
+  const defaults = DEFAULT_COLUMN_ORDERS[table] || [];
+  try {
+    const stored = JSON.parse(localStorage.getItem(columnOrderStorageKey(table)) || "[]");
+    if (Array.isArray(stored)) return normalizeColumnOrder(table, stored);
+  } catch (error) {
+    console.warn(`Could not load ${table} column order.`, error);
+  }
+  return normalizeColumnOrder(table, defaults);
+}
+
+function saveColumnOrder(table) {
+  try {
+    localStorage.setItem(columnOrderStorageKey(table), JSON.stringify(state.columnOrders[table] || []));
+  } catch (error) {
+    console.warn(`Could not save ${table} column order.`, error);
+  }
+}
+
+function columnOrderStorageKey(table) {
+  return `product-dashboard:${table}-columns`;
+}
+
+function normalizeColumnOrder(table, order) {
+  const defaults = DEFAULT_COLUMN_ORDERS[table] || [];
+  const validKeys = new Set(defaults);
+  const normalized = order.filter((key, index) => validKeys.has(key) && order.indexOf(key) === index);
+  defaults.forEach((key) => {
+    if (!normalized.includes(key)) normalized.push(key);
+  });
+  return normalized;
+}
+
+function getTableColumns(table) {
+  const defs = COLUMN_DEFS_BY_TABLE[table] || [];
+  const byKey = new Map(defs.map((column) => [column.key, column]));
+  const order = normalizeColumnOrder(table, state.columnOrders[table] || []);
+  state.columnOrders[table] = order;
+  return order.map((key) => byKey.get(key)).filter(Boolean);
+}
+
+function moveColumn(table, key, direction) {
+  const order = normalizeColumnOrder(table, state.columnOrders[table] || []);
+  const index = order.indexOf(key);
+  const offset = direction === "up" ? -1 : direction === "down" ? 1 : 0;
+  const nextIndex = index + offset;
+  if (index < 0 || nextIndex < 0 || nextIndex >= order.length) return;
+
+  order.splice(index, 1);
+  order.splice(nextIndex, 0, key);
+  state.columnOrders[table] = order;
+  saveColumnOrder(table);
+  renderColumnSettings();
+  renderPivotTable(state.pivotRows);
+  renderProductTable(state.productRows);
+}
+
+function resetColumnOrder(table) {
+  if (!DEFAULT_COLUMN_ORDERS[table]) return;
+  state.columnOrders[table] = [...DEFAULT_COLUMN_ORDERS[table]];
+  saveColumnOrder(table);
+  renderColumnSettings();
+  renderPivotTable(state.pivotRows);
+  renderProductTable(state.productRows);
+}
+
+function renderColumnSettings() {
+  renderColumnOrderList("pivot", dom.pivotColumnList);
+  renderColumnOrderList("product", dom.productColumnList);
+}
+
+function renderColumnOrderList(table, target) {
+  if (!target) return;
+  const columns = getTableColumns(table);
+  target.innerHTML = columns.map((column, index) => `
+    <div class="column-order-row">
+      <span>${escapeHtml(column.label)}</span>
+      <div class="column-order-actions">
+        <button class="button compact" type="button" data-column-table="${table}" data-column-key="${column.key}" data-column-move="up" ${index === 0 ? "disabled" : ""}>Up</button>
+        <button class="button compact" type="button" data-column-table="${table}" data-column-key="${column.key}" data-column-move="down" ${index === columns.length - 1 ? "disabled" : ""}>Down</button>
+      </div>
+    </div>
+  `).join("");
 }
 
 async function refreshRepositoryData({ preserveDates, forceRefresh } = { preserveDates: true, forceRefresh: false }) {
@@ -868,7 +1030,6 @@ function renderKpis(current, comparison, hasComparison) {
   setKpi(dom.kpiSales, dom.kpiSalesDelta, formatCurrency(current.netSales), hasComparison ? percentChange(current.netSales, comparison.netSales) : null, hasComparison);
   setKpi(dom.kpiUnits, dom.kpiUnitsDelta, formatNumber(current.netUnits), hasComparison ? percentChange(current.netUnits, comparison.netUnits) : null, hasComparison);
   setKpi(dom.kpiOrders, dom.kpiOrdersDelta, formatNumber(current.orders), hasComparison ? percentChange(current.orders, comparison.orders) : null, hasComparison);
-  setKpi(dom.kpiAur, dom.kpiAurDelta, formatCurrencyPrecise(current.aov), hasComparison ? percentChange(current.aov, comparison.aov) : null, hasComparison);
 }
 
 function setKpi(valueElement, deltaElement, value, delta, hasComparison = true) {
@@ -1119,28 +1280,65 @@ function renderPivotTable(rows) {
   const dimension = getActiveDimension();
   const limit = getRowLimit();
   const visibleRows = Number.isFinite(limit) ? rows.slice(0, limit) : rows;
+  const columns = getTableColumns("pivot");
 
   dom.pivotHeading.textContent = `Performance by ${dimension.label}`;
+  dom.pivotThead.innerHTML = `<tr>${columns.map((column) => renderTableHeader("pivot", column)).join("")}</tr>`;
   updateSortHeaderStates();
 
   if (!visibleRows.length) {
-    dom.pivotTbody.innerHTML = `<tr><td colspan="9">No rows for the selected period and filters</td></tr>`;
+    dom.pivotTbody.innerHTML = `<tr><td colspan="${columns.length}">No rows for the selected period and filters</td></tr>`;
     return;
   }
 
   dom.pivotTbody.innerHTML = visibleRows.map((row) => `
     <tr>
-      <td><div class="clip" title="${escapeHtml(row.value)}">${escapeHtml(row.value)}</div></td>
-      <td><div class="clip" title="${escapeHtml(row.status)}">${escapeHtml(row.status)}</div></td>
-      <td class="numeric">${formatCurrency(row.netSales)}</td>
-      <td class="numeric">${formatPercent(row.salesShare)}</td>
-      <td class="numeric">${formatNumber(row.netUnits)}</td>
-      <td class="numeric">${formatPercent(row.unitsShare)}</td>
-      <td class="numeric">${row.hasComparison ? formatCurrency(row.compareSales) : ""}</td>
-      <td class="numeric ${row.hasComparison && row.change > 0 ? "delta-positive" : row.hasComparison && row.change < 0 ? "delta-negative" : ""}">${row.hasComparison ? formatCurrency(row.change) : ""}</td>
-      <td class="numeric ${row.hasComparison && row.change > 0 ? "delta-positive" : row.hasComparison && row.change < 0 ? "delta-negative" : ""}">${row.hasComparison ? (row.changePct === null ? "n/a" : formatPercent(row.changePct)) : ""}</td>
+      ${columns.map((column) => renderPivotCell(row, column)).join("")}
     </tr>
   `).join("");
+}
+
+function renderTableHeader(table, column) {
+  return `
+    <th class="${column.numeric ? "numeric" : ""}">
+      <button data-table-sort="${table}" data-sort-key="${column.key}" type="button">
+        <span>${escapeHtml(column.label)}</span>
+        <span class="sort-icon" aria-hidden="true"></span>
+      </button>
+    </th>
+  `;
+}
+
+function renderPivotCell(row, column) {
+  if (column.key === "value" || column.key === "status") {
+    const value = row[column.key] || "";
+    return renderTextCell(value);
+  }
+
+  const value = formatPivotCellValue(row, column.key);
+  return `<td class="numeric ${getDeltaClass(row, column.key)}">${value}</td>`;
+}
+
+function renderTextCell(value) {
+  return `<td><div class="clip" title="${escapeHtml(value)}">${escapeHtml(value)}</div></td>`;
+}
+
+function formatPivotCellValue(row, key) {
+  if (key === "netSales") return formatCurrency(row.netSales);
+  if (key === "salesShare") return formatPercent(row.salesShare);
+  if (key === "netUnits") return formatNumber(row.netUnits);
+  if (key === "unitsShare") return formatPercent(row.unitsShare);
+  if (key === "compareSales") return row.hasComparison ? formatCurrency(row.compareSales) : "";
+  if (key === "change") return row.hasComparison ? formatCurrency(row.change) : "";
+  if (key === "changePct") return row.hasComparison ? (row.changePct === null ? "n/a" : formatPercent(row.changePct)) : "";
+  return "";
+}
+
+function getDeltaClass(row, key) {
+  if ((key !== "change" && key !== "changePct") || !row.hasComparison) return "";
+  if (row.change > 0) return "delta-positive";
+  if (row.change < 0) return "delta-negative";
+  return "";
 }
 
 function buildProductResults(records, comparisonRecords = [], hasComparison = false) {
@@ -1299,6 +1497,7 @@ function renderProductTable(rows) {
   if (!dom.productTbody) return;
 
   const sortedRows = sortProductRows(rows);
+  const columns = getTableColumns("product");
   const totalSales = sum(sortedRows, "netSales");
   const totalUnits = sum(sortedRows, "netUnits");
   const hasComparison = sortedRows.some((row) => row.hasComparison);
@@ -1307,40 +1506,58 @@ function renderProductTable(rows) {
   const totalChangePct = hasComparison ? percentChange(totalSales, totalCompareSales) : null;
   const suffix = sortedRows.length === 1 ? "product" : "products";
   dom.productHeading.textContent = `Product Results (${numberFormat.format(rows.length)} ${suffix})`;
+  dom.productThead.innerHTML = `<tr>${columns.map((column) => renderTableHeader("product", column)).join("")}</tr>`;
   updateSortHeaderStates();
 
   if (!sortedRows.length) {
-    dom.productTbody.innerHTML = `<tr><td colspan="8">No products for the selected period and filters</td></tr>`;
+    dom.productTbody.innerHTML = `<tr><td colspan="${columns.length}">No products for the selected period and filters</td></tr>`;
     return;
   }
 
   const bodyRows = sortedRows.map((row) => `
     <tr>
-      <td><div class="clip" title="${escapeHtml(row.productTitle)}">${escapeHtml(row.productTitle)}</div></td>
-      <td><div class="clip" title="${escapeHtml(row.sku)}">${escapeHtml(row.sku)}</div></td>
-      <td><div class="clip" title="${escapeHtml(row.status)}">${escapeHtml(row.status)}</div></td>
-      <td class="numeric">${formatCurrency(row.netSales)}</td>
-      <td class="numeric">${formatNumber(row.netUnits)}</td>
-      <td class="numeric">${formatPercent(row.salesShare)}</td>
-      <td class="numeric ${row.hasComparison && row.change > 0 ? "delta-positive" : row.hasComparison && row.change < 0 ? "delta-negative" : ""}">${row.hasComparison ? formatCurrency(row.change) : ""}</td>
-      <td class="numeric ${row.hasComparison && row.change > 0 ? "delta-positive" : row.hasComparison && row.change < 0 ? "delta-negative" : ""}">${row.hasComparison ? (row.changePct === null ? "n/a" : formatPercent(row.changePct)) : ""}</td>
+      ${columns.map((column) => renderProductCell(row, column)).join("")}
     </tr>
   `);
 
   bodyRows.push(`
     <tr class="total-row">
-      <td>Total</td>
-      <td></td>
-      <td></td>
-      <td class="numeric">${formatCurrency(totalSales)}</td>
-      <td class="numeric">${formatNumber(totalUnits)}</td>
-      <td class="numeric">${formatPercent(totalSales ? 1 : 0)}</td>
-      <td class="numeric">${hasComparison ? formatCurrency(totalChange) : ""}</td>
-      <td class="numeric">${hasComparison ? (totalChangePct === null ? "n/a" : formatPercent(totalChangePct)) : ""}</td>
+      ${columns.map((column) => renderProductTotalCell(column, { totalSales, totalUnits, hasComparison, totalChange, totalChangePct })).join("")}
     </tr>
   `);
 
   dom.productTbody.innerHTML = bodyRows.join("");
+}
+
+function renderProductCell(row, column) {
+  if (column.key === "productTitle" || column.key === "sku" || column.key === "status") {
+    return renderTextCell(row[column.key] || "");
+  }
+
+  const value = formatProductCellValue(row, column.key);
+  return `<td class="numeric ${getDeltaClass(row, column.key)}">${value}</td>`;
+}
+
+function formatProductCellValue(row, key) {
+  if (key === "netSales") return formatCurrency(row.netSales);
+  if (key === "netUnits") return formatNumber(row.netUnits);
+  if (key === "salesShare") return formatPercent(row.salesShare);
+  if (key === "change") return row.hasComparison ? formatCurrency(row.change) : "";
+  if (key === "changePct") return row.hasComparison ? (row.changePct === null ? "n/a" : formatPercent(row.changePct)) : "";
+  return "";
+}
+
+function renderProductTotalCell(column, totals) {
+  if (column.key === "productTitle") return "<td>Total</td>";
+  if (column.key === "sku" || column.key === "status") return "<td></td>";
+
+  let value = "";
+  if (column.key === "netSales") value = formatCurrency(totals.totalSales);
+  if (column.key === "netUnits") value = formatNumber(totals.totalUnits);
+  if (column.key === "salesShare") value = formatPercent(totals.totalSales ? 1 : 0);
+  if (column.key === "change") value = totals.hasComparison ? formatCurrency(totals.totalChange) : "";
+  if (column.key === "changePct") value = totals.hasComparison ? (totals.totalChangePct === null ? "n/a" : formatPercent(totals.totalChangePct)) : "";
+  return `<td class="numeric">${value}</td>`;
 }
 
 function buildRegionalTopProducts(records) {
@@ -1407,8 +1624,7 @@ function summarize(records) {
   return {
     netSales,
     netUnits,
-    orders: orders.size,
-    aov: orders.size ? netSales / orders.size : 0
+    orders: orders.size
   };
 }
 
@@ -1488,22 +1704,26 @@ function getRowLimit() {
 function exportPivotCsv() {
   const dimension = getActiveDimension();
   const rows = state.pivotRows;
-  const headers = [dimension.label, "Status", "Net Sales", "% Sales", "Net Units", "% Units", "Compare Sales", "Change", "Change %"];
+  const columns = getTableColumns("pivot");
+  const headers = columns.map((column) => column.key === "value" ? dimension.label : column.label);
   const lines = [
     headers,
-    ...rows.map((row) => [
-      row.value,
-      row.status,
-      row.netSales,
-      row.salesShare,
-      row.netUnits,
-      row.unitsShare,
-      row.hasComparison ? row.compareSales : "",
-      row.hasComparison ? row.change : "",
-      row.hasComparison ? (row.changePct === null ? "n/a" : row.changePct) : ""
-    ])
+    ...rows.map((row) => columns.map((column) => getPivotExportValue(row, column.key)))
   ];
   downloadFile(`pivot-${dimension.key}-${todayKey()}.csv`, lines.map(csvLine).join("\n"), "text/csv");
+}
+
+function getPivotExportValue(row, key) {
+  if (key === "value") return row.value;
+  if (key === "status") return row.status;
+  if (key === "netSales") return row.netSales;
+  if (key === "salesShare") return row.salesShare;
+  if (key === "netUnits") return row.netUnits;
+  if (key === "unitsShare") return row.unitsShare;
+  if (key === "compareSales") return row.hasComparison ? row.compareSales : "";
+  if (key === "change") return row.hasComparison ? row.change : "";
+  if (key === "changePct") return row.hasComparison ? (row.changePct === null ? "n/a" : row.changePct) : "";
+  return "";
 }
 
 class ZipArchive {
@@ -2037,10 +2257,6 @@ function sum(records, key) {
 
 function formatCurrency(value) {
   return currencyFormat.format(value || 0);
-}
-
-function formatCurrencyPrecise(value) {
-  return currencyPreciseFormat.format(value || 0);
 }
 
 function formatNumber(value) {
