@@ -11,6 +11,9 @@ const DATA_CACHE_VERSION = "parsed-csv-v5";
 const BLANK = "(blank)";
 const MAX_FILTER_OPTIONS = 180;
 const SKU_DISPLAY_WIDTH = 8;
+const TREND_SUGGESTION_LIMIT = 20;
+const TREND_SKU_SUGGESTION_MIN = 5;
+const TREND_TEXT_SUGGESTION_MIN = 4;
 const PRICE_STATUS_LABELS = ["Full Price", "Markdown"];
 const STATUS_DISPLAY_ORDER = ["Full Price", "Markdown", "Return"];
 
@@ -109,6 +112,7 @@ const state = {
   productRows: [],
   regionalProductRows: [],
   trendProductQuery: "",
+  trendGrain: "week",
   columnOrders: {
     pivot: [],
     product: []
@@ -119,6 +123,7 @@ const state = {
 
 const dom = {};
 const currencyFormat = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 });
+const compactCurrencyFormat = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", notation: "compact", maximumFractionDigits: 1 });
 const numberFormat = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 0 });
 const percentFormat = new Intl.NumberFormat("en-CA", { style: "percent", maximumFractionDigits: 1 });
 const collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
@@ -164,10 +169,11 @@ function collectDom() {
     activeDimension: document.querySelector("#active-dimension"),
     barChart: document.querySelector("#bar-chart"),
     trendHeading: document.querySelector("#trend-heading"),
+    trendGrain: document.querySelector("#trend-grain"),
     trendProductInput: document.querySelector("#trend-product-input"),
     trendProductOptions: document.querySelector("#trend-product-options"),
     clearTrendProduct: document.querySelector("#clear-trend-product"),
-    trendTbody: document.querySelector("#trend-tbody"),
+    trendChart: document.querySelector("#trend-chart"),
     fileTbody: document.querySelector("#file-tbody"),
     pivotHeading: document.querySelector("#pivot-heading"),
     pivotThead: document.querySelector("#pivot-thead"),
@@ -195,6 +201,7 @@ function bindEvents() {
   dom.exportCsv.addEventListener("click", exportPivotCsv);
   dom.exportProductCsv.addEventListener("click", exportProductCsv);
   dom.clearFilters.addEventListener("click", clearAllFilters);
+  dom.trendGrain.addEventListener("change", handleTrendGrainChange);
   dom.trendProductInput.addEventListener("input", handleTrendProductInput);
   dom.clearTrendProduct.addEventListener("click", clearTrendProduct);
 
@@ -1175,6 +1182,11 @@ function handleTrendProductInput() {
   renderTrendTable(applyDimensionFilters(state.records));
 }
 
+function handleTrendGrainChange() {
+  state.trendGrain = dom.trendGrain.value || "week";
+  renderTrendTable(applyDimensionFilters(state.records));
+}
+
 function clearTrendProduct() {
   state.trendProductQuery = "";
   dom.trendProductInput.value = "";
@@ -1182,44 +1194,135 @@ function clearTrendProduct() {
 }
 
 function renderTrendTable(filteredRecords) {
-  if (!dom.trendTbody) return;
+  if (!dom.trendChart) return;
 
+  state.trendGrain = dom.trendGrain.value || state.trendGrain || "week";
   renderTrendProductOptions(filteredRecords);
   const trendRecords = filterTrendProductRecords(filteredRecords);
-  const rows = buildWeeklyTrendRows(trendRecords);
-  dom.trendHeading.textContent = state.trendProductQuery ? "Weekly Trend by Product" : "Weekly Trend";
+  const rows = buildTrendRows(trendRecords, state.trendGrain);
+  const grainLabel = getTrendGrainLabel(state.trendGrain);
+  dom.trendHeading.textContent = state.trendProductQuery ? `${grainLabel} Trend by Product` : `${grainLabel} Trend`;
 
   if (!rows.length) {
-    dom.trendTbody.innerHTML = `<tr><td colspan="6">No weekly trend results</td></tr>`;
+    dom.trendChart.innerHTML = `<div class="empty-state">No trend results</div>`;
     return;
   }
 
-  const maxSales = Math.max(...rows.map((row) => Math.abs(row.netSales)), 1);
-  dom.trendTbody.innerHTML = rows.map((row) => {
-    const width = Math.max(2, Math.abs(row.netSales) / maxSales * 100);
-    return `
-      <tr>
-        <td><div class="clip" title="${escapeHtml(row.weekLabel)}">${escapeHtml(row.weekLabel)}</div></td>
-        <td class="numeric trend-sales-cell">
-          <span>${formatCurrency(row.netSales)}</span>
-          <span class="trend-bar-track" aria-hidden="true"><span class="trend-bar-fill ${row.netSales < 0 ? "negative" : ""}" style="--bar-width:${width.toFixed(2)}%"></span></span>
-        </td>
-        <td class="numeric ${row.salesChange > 0 ? "delta-positive" : row.salesChange < 0 ? "delta-negative" : ""}">${row.salesChange === null ? "" : formatCurrency(row.salesChange)}</td>
-        <td class="numeric">${formatNumber(row.netUnits)}</td>
-        <td class="numeric ${row.unitsChange > 0 ? "delta-positive" : row.unitsChange < 0 ? "delta-negative" : ""}">${row.unitsChange === null ? "" : formatNumber(row.unitsChange)}</td>
-        <td class="numeric">${formatNumber(row.orders)}</td>
-      </tr>
-    `;
-  }).join("");
+  dom.trendChart.innerHTML = renderTrendLineChart(rows);
+}
+
+function renderTrendLineChart(rows) {
+  const width = 760;
+  const height = 310;
+  const pad = { top: 24, right: 28, bottom: 58, left: 82 };
+  const plotWidth = width - pad.left - pad.right;
+  const plotHeight = height - pad.top - pad.bottom;
+  const values = rows.map((row) => row.netSales);
+  let minValue = Math.min(0, ...values);
+  let maxValue = Math.max(0, ...values);
+  if (minValue === maxValue) {
+    minValue -= 1;
+    maxValue += 1;
+  }
+
+  const xForIndex = (index) => {
+    if (rows.length === 1) return pad.left + plotWidth / 2;
+    return pad.left + (index / (rows.length - 1)) * plotWidth;
+  };
+  const yForValue = (value) => pad.top + (1 - (value - minValue) / (maxValue - minValue)) * plotHeight;
+  const points = rows.map((row, index) => ({
+    ...row,
+    x: xForIndex(index),
+    y: yForValue(row.netSales)
+  }));
+  const linePath = points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" ");
+  const baselineY = yForValue(0);
+  const areaPath = `${linePath} L ${points[points.length - 1].x.toFixed(2)} ${baselineY.toFixed(2)} L ${points[0].x.toFixed(2)} ${baselineY.toFixed(2)} Z`;
+  const ticks = buildTrendYAxisTicks(minValue, maxValue, 4);
+  const xLabelIndexes = getTrendXLabelIndexes(rows.length);
+  const latest = rows[rows.length - 1];
+  const latestChange = latest.salesChange === null ? "" : `${latest.salesChange >= 0 ? "+" : ""}${formatCurrency(latest.salesChange)}`;
+
+  return `
+    <div class="trend-summary">
+      <div>
+        <span>Latest Period</span>
+        <strong>${escapeHtml(latest.periodLabel)}</strong>
+      </div>
+      <div>
+        <span>Net Sales</span>
+        <strong>${formatCurrency(latest.netSales)}</strong>
+      </div>
+      <div>
+        <span>Net Units</span>
+        <strong>${formatNumber(latest.netUnits)}</strong>
+      </div>
+      <div>
+        <span>Sales Change</span>
+        <strong class="${latest.salesChange > 0 ? "delta-positive" : latest.salesChange < 0 ? "delta-negative" : ""}">${latestChange}</strong>
+      </div>
+    </div>
+    <svg class="trend-line-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Net sales trend">
+      <rect x="0" y="0" width="${width}" height="${height}" class="trend-svg-bg"></rect>
+      ${ticks.map((tick) => {
+        const y = yForValue(tick);
+        return `
+          <line x1="${pad.left}" y1="${y.toFixed(2)}" x2="${width - pad.right}" y2="${y.toFixed(2)}" class="trend-grid-line"></line>
+          <text x="${pad.left - 12}" y="${(y + 4).toFixed(2)}" class="trend-axis-label" text-anchor="end">${escapeHtml(formatCompactCurrency(tick))}</text>
+        `;
+      }).join("")}
+      <line x1="${pad.left}" y1="${baselineY.toFixed(2)}" x2="${width - pad.right}" y2="${baselineY.toFixed(2)}" class="trend-zero-line"></line>
+      <path d="${areaPath}" class="trend-area"></path>
+      <path d="${linePath}" class="trend-line"></path>
+      ${points.map((point) => `
+        <circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="4.5" class="trend-point">
+          <title>${escapeHtml(`${point.periodLabel}: ${formatCurrency(point.netSales)} | ${formatNumber(point.netUnits)} units`)}</title>
+        </circle>
+      `).join("")}
+      ${xLabelIndexes.map((index) => {
+        const point = points[index];
+        return `<text x="${point.x.toFixed(2)}" y="${height - 22}" class="trend-axis-label trend-x-label" text-anchor="middle">${escapeHtml(shortTrendLabel(point.periodLabel, state.trendGrain))}</text>`;
+      }).join("")}
+    </svg>
+  `;
+}
+
+function buildTrendYAxisTicks(minValue, maxValue, count) {
+  const ticks = [];
+  for (let index = 0; index <= count; index += 1) {
+    ticks.push(minValue + ((maxValue - minValue) * index / count));
+  }
+  return ticks;
+}
+
+function getTrendXLabelIndexes(length) {
+  if (length <= 1) return [0];
+  if (length <= 6) return Array.from({ length }, (_, index) => index);
+  const indexes = new Set();
+  const maxLabels = 6;
+  for (let index = 0; index < maxLabels; index += 1) {
+    indexes.add(Math.round(index * (length - 1) / (maxLabels - 1)));
+  }
+  return Array.from(indexes).sort((a, b) => a - b);
+}
+
+function shortTrendLabel(label, grain) {
+  if (grain === "week") return label.slice(0, 10);
+  return label;
 }
 
 function renderTrendProductOptions(records) {
   if (!dom.trendProductOptions) return;
   const query = cleanText(dom.trendProductInput.value);
+  if (!shouldShowTrendSuggestions(query)) {
+    dom.trendProductOptions.innerHTML = "";
+    return;
+  }
+
   const products = aggregateTrendProducts(records)
-    .filter((product) => !query || product.optionLabel.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
+    .filter((product) => productMatchesTrendQuery(product, query))
     .sort((a, b) => b.netSales - a.netSales || collator.compare(a.optionLabel, b.optionLabel))
-    .slice(0, 120);
+    .slice(0, TREND_SUGGESTION_LIMIT);
 
   dom.trendProductOptions.innerHTML = products.map((product) => `
     <option value="${escapeHtml(product.optionLabel)}"></option>
@@ -1229,6 +1332,7 @@ function renderTrendProductOptions(records) {
 function filterTrendProductRecords(records) {
   const query = cleanText(state.trendProductQuery);
   if (!query) return records;
+  if (!shouldShowTrendSuggestions(query)) return records;
 
   const products = aggregateTrendProducts(records);
   const exact = resolveTrendProduct(query, products);
@@ -1246,6 +1350,26 @@ function filterTrendProductRecords(records) {
       || rawSku.includes(normalizedQuery)
       || (normalizedSkuQuery && skuKey.includes(normalizedSkuQuery));
   });
+}
+
+function shouldShowTrendSuggestions(query) {
+  const text = cleanText(query);
+  if (!text) return false;
+  const digits = text.replace(/\D/g, "");
+  const isSkuLike = digits && text.replace(/[0-9\s-]/g, "") === "";
+  return isSkuLike ? digits.length >= TREND_SKU_SUGGESTION_MIN : text.length >= TREND_TEXT_SUGGESTION_MIN;
+}
+
+function productMatchesTrendQuery(product, query) {
+  const text = cleanText(query).toLocaleLowerCase();
+  const skuQuery = normalizeSkuKey(query);
+  const displaySku = product.sku.toLocaleLowerCase();
+  const rawProductTitle = product.productTitle.toLocaleLowerCase();
+  const optionLabel = product.optionLabel.toLocaleLowerCase();
+  return optionLabel.includes(text)
+    || rawProductTitle.includes(text)
+    || displaySku.includes(text)
+    || (skuQuery && normalizeSkuKey(product.sku).includes(skuQuery));
 }
 
 function resolveTrendProduct(query, products) {
@@ -1267,16 +1391,16 @@ function aggregateTrendProducts(records) {
   }));
 }
 
-function buildWeeklyTrendRows(records) {
+function buildTrendRows(records, grain = "week") {
   const map = new Map();
   for (const record of records) {
-    const week = getWeekRangeForDateKey(record.dateKey);
-    if (!week) continue;
-    if (!map.has(week.start)) {
-      map.set(week.start, {
-        weekStart: week.start,
-        weekEnd: week.end,
-        weekLabel: `${week.start} to ${week.end}`,
+    const bucket = getTrendBucketForDateKey(record.dateKey, grain);
+    if (!bucket) continue;
+    if (!map.has(bucket.start)) {
+      map.set(bucket.start, {
+        periodStart: bucket.start,
+        periodEnd: bucket.end,
+        periodLabel: bucket.label,
         netSales: 0,
         netUnits: 0,
         orders: new Set(),
@@ -1285,13 +1409,13 @@ function buildWeeklyTrendRows(records) {
       });
     }
 
-    const row = map.get(week.start);
+    const row = map.get(bucket.start);
     row.netSales += record.netSales;
     row.netUnits += record.netUnits;
     if (record.orderKey) row.orders.add(record.orderKey);
   }
 
-  const chronological = Array.from(map.values()).sort((a, b) => collator.compare(a.weekStart, b.weekStart));
+  const chronological = Array.from(map.values()).sort((a, b) => collator.compare(a.periodStart, b.periodStart));
   chronological.forEach((row, index) => {
     const previous = chronological[index - 1];
     row.orders = row.orders.size;
@@ -1301,18 +1425,48 @@ function buildWeeklyTrendRows(records) {
     }
   });
 
-  return chronological.reverse();
+  return chronological;
 }
 
-function getWeekRangeForDateKey(key) {
+function buildWeeklyTrendRows(records) {
+  return buildTrendRows(records, "week");
+}
+
+function getTrendBucketForDateKey(key, grain) {
   if (!key) return null;
+  if (grain === "day") {
+    return {
+      start: key,
+      end: key,
+      label: key
+    };
+  }
+
+  if (grain === "month") {
+    const [year, month] = key.split("-").map(Number);
+    const start = `${year}-${String(month).padStart(2, "0")}-01`;
+    const end = dateKey(new Date(Date.UTC(year, month, 0)));
+    return {
+      start,
+      end,
+      label: `${year}-${String(month).padStart(2, "0")}`
+    };
+  }
+
   const date = dateFromKey(key);
   const start = addDays(date, -date.getUTCDay());
   const end = addDays(start, 6);
   return {
     start: dateKey(start),
-    end: dateKey(end)
+    end: dateKey(end),
+    label: `${dateKey(start)} to ${dateKey(end)}`
   };
+}
+
+function getTrendGrainLabel(grain) {
+  if (grain === "day") return "Daily";
+  if (grain === "month") return "Monthly";
+  return "Weekly";
 }
 
 function buildPivot(currentRecords, comparisonRecords, hasComparison) {
@@ -2499,6 +2653,10 @@ function sum(records, key) {
 
 function formatCurrency(value) {
   return currencyFormat.format(value || 0);
+}
+
+function formatCompactCurrency(value) {
+  return compactCurrencyFormat.format(value || 0);
 }
 
 function formatNumber(value) {

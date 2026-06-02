@@ -135,6 +135,14 @@
                   <h2 id="trend-heading">Weekly Trend</h2>
                 </div>
                 <div class="trend-controls">
+                  <label class="trend-time-control">
+                    <span>Time</span>
+                    <select id="trend-grain">
+                      <option value="day">Day</option>
+                      <option value="week" selected>Week</option>
+                      <option value="month">Month</option>
+                    </select>
+                  </label>
                   <label class="trend-product-control">
                     <span>Product</span>
                     <input id="trend-product-input" type="search" list="trend-product-options" placeholder="Product or SKU">
@@ -143,21 +151,7 @@
                   <button id="clear-trend-product" class="button compact" type="button">Clear</button>
                 </div>
               </div>
-              <div class="table-scroll trend-scroll">
-                <table class="trend-table">
-                  <thead>
-                    <tr>
-                      <th>Week</th>
-                      <th>Net Sales</th>
-                      <th>Sales Change</th>
-                      <th>Net Units</th>
-                      <th>Units Change</th>
-                      <th>Orders</th>
-                    </tr>
-                  </thead>
-                  <tbody id="trend-tbody"></tbody>
-                </table>
-              </div>
+              <div id="trend-chart" class="trend-chart" role="img" aria-label="Net sales trend line chart"></div>
             </section>
 
             <section class="panel table-panel pivot-main">
