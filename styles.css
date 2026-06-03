@@ -558,12 +558,13 @@ select:focus {
 
 .trend-controls {
   display: grid;
-  grid-template-columns: 112px minmax(220px, 320px) auto;
+  grid-template-columns: 112px 120px minmax(220px, 320px) auto;
   gap: 8px;
   align-items: end;
 }
 
 .trend-time-control,
+.trend-metric-control,
 .trend-product-control {
   min-width: 0;
 }
@@ -760,12 +761,43 @@ th.numeric {
   font-variant-numeric: tabular-nums;
 }
 
-.pivot-table td:first-child,
 .regional-product-table td:nth-child(4),
-.product-table td:first-child,
 .file-table td:first-child {
   min-width: 180px;
   max-width: 320px;
+}
+
+.pivot-table .col-value {
+  min-width: 180px;
+  width: 28%;
+  max-width: 380px;
+}
+
+.product-table .col-productTitle {
+  min-width: 280px;
+  width: 44%;
+  max-width: 620px;
+}
+
+.product-table .col-sku {
+  min-width: 96px;
+  width: 108px;
+  max-width: 130px;
+}
+
+.product-table .col-status {
+  min-width: 126px;
+  width: 140px;
+}
+
+.product-table .col-netSales,
+.product-table .col-netUnits,
+.product-table .col-salesShare,
+.product-table .col-change,
+.product-table .col-unitChange,
+.product-table .col-changePct {
+  min-width: 118px;
+  width: 128px;
 }
 
 .regional-product-table td:first-child {
@@ -818,7 +850,8 @@ th.numeric {
 .trend-line-svg {
   display: block;
   width: 100%;
-  min-height: 300px;
+  min-height: 340px;
+  overflow: visible;
 }
 
 .trend-svg-bg {
@@ -841,16 +874,52 @@ th.numeric {
 
 .trend-line {
   fill: none;
-  stroke: var(--green);
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 4;
 }
 
-.trend-point {
+.sales-line {
+  stroke: var(--green);
+}
+
+.units-line {
+  stroke: #4fb6ff;
+  stroke-dasharray: 7 5;
+  stroke-width: 3.4;
+}
+
+.sales-area {
+  fill: rgba(255, 221, 0, 0.13);
+}
+
+.units-area {
+  fill: rgba(79, 182, 255, 0.11);
+}
+
+.trend-point-dot {
   fill: var(--green);
   stroke: var(--black);
   stroke-width: 2;
+  cursor: pointer;
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 120ms ease, filter 120ms ease, stroke-width 120ms ease;
+}
+
+.trend-point-sales {
+  fill: var(--green);
+}
+
+.trend-point-units {
+  fill: #4fb6ff;
+}
+
+.trend-point-group:hover .trend-point-dot,
+.trend-point-group:focus .trend-point-dot {
+  filter: drop-shadow(0 0 8px rgba(255, 221, 0, 0.42));
+  stroke-width: 2.6;
+  transform: scale(1.36);
 }
 
 .trend-axis-label {
@@ -861,6 +930,80 @@ th.numeric {
 
 .trend-x-label {
   fill: var(--ink);
+  font-size: 10px;
+  font-weight: 820;
+}
+
+.units-axis {
+  fill: #9bd2ff;
+}
+
+.trend-legend {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  justify-content: flex-end;
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 820;
+  text-transform: uppercase;
+}
+
+.trend-legend span {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.legend-swatch {
+  display: inline-block;
+  width: 24px;
+  height: 3px;
+  border-radius: 999px;
+}
+
+.legend-swatch.sales {
+  background: var(--green);
+}
+
+.legend-swatch.units {
+  background: repeating-linear-gradient(90deg, #4fb6ff 0 7px, transparent 7px 11px);
+}
+
+.trend-tooltip {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.trend-point-group:hover .trend-tooltip,
+.trend-point-group:focus .trend-tooltip {
+  opacity: 1;
+}
+
+.trend-tooltip-card {
+  fill: rgba(16, 16, 16, 0.98);
+  stroke: rgba(255, 221, 0, 0.78);
+  stroke-width: 1.2;
+  filter: drop-shadow(0 14px 20px rgba(0, 0, 0, 0.42));
+}
+
+.trend-tooltip-accent {
+  fill: var(--green);
+}
+
+.trend-tooltip-label {
+  fill: var(--muted);
+  font-size: 10px;
+  font-weight: 860;
+  text-transform: uppercase;
+}
+
+.trend-tooltip-value {
+  fill: var(--ink);
+  font-size: 12px;
+  font-weight: 860;
 }
 
 .rank-change {
@@ -996,7 +1139,7 @@ th.numeric {
 
 .column-order-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 26px minmax(0, 1fr);
   gap: 12px;
   align-items: center;
   min-height: 48px;
@@ -1004,9 +1147,38 @@ th.numeric {
   border-radius: 8px;
   padding: 9px 10px;
   background: var(--surface-2);
+  cursor: grab;
+  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
 }
 
-.column-order-row span {
+.column-order-row.dragging {
+  border-color: var(--green);
+  background: var(--surface-3);
+  cursor: grabbing;
+  opacity: 0.78;
+}
+
+.column-order-row.drag-over-before {
+  border-top-color: var(--green);
+  box-shadow: inset 0 3px 0 var(--green);
+}
+
+.column-order-row.drag-over-after {
+  border-bottom-color: var(--green);
+  box-shadow: inset 0 -3px 0 var(--green);
+}
+
+.column-drag-handle {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background:
+    radial-gradient(circle, var(--muted) 1.4px, transparent 1.7px) 0 0 / 6px 6px;
+  opacity: 0.76;
+}
+
+.column-order-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1014,11 +1186,6 @@ th.numeric {
   color: var(--ink);
   font-size: 13px;
   font-weight: 820;
-}
-
-.column-order-actions {
-  display: flex;
-  gap: 6px;
 }
 
 .button:disabled {
@@ -1125,7 +1292,7 @@ th.numeric {
   }
 
   .column-order-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: 26px minmax(0, 1fr);
   }
 
   .trend-controls {

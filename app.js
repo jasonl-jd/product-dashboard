@@ -14,6 +14,8 @@ const SKU_DISPLAY_WIDTH = 8;
 const TREND_SUGGESTION_LIMIT = 20;
 const TREND_SKU_SUGGESTION_MIN = 5;
 const TREND_TEXT_SUGGESTION_MIN = 4;
+const TREND_METRIC_OPTIONS = new Set(["sales", "units", "both"]);
+const TREND_MONTH_ABBRS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const PRICE_STATUS_LABELS = ["Full Price", "Markdown"];
 const STATUS_DISPLAY_ORDER = ["Full Price", "Markdown", "Return"];
 
@@ -114,6 +116,7 @@ const state = {
   regionalProductRows: [],
   trendProductQuery: "",
   trendGrain: "week",
+  trendMetric: "sales",
   columnOrders: {
     pivot: [],
     product: []
@@ -129,6 +132,7 @@ const numberFormat = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 0 }
 const percentFormat = new Intl.NumberFormat("en-CA", { style: "percent", maximumFractionDigits: 1 });
 const collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
 let filterSearchTimer = null;
+let columnDrag = null;
 
 document.addEventListener("DOMContentLoaded", init);
 
@@ -172,6 +176,7 @@ function collectDom() {
     barChart: document.querySelector("#bar-chart"),
     trendHeading: document.querySelector("#trend-heading"),
     trendGrain: document.querySelector("#trend-grain"),
+    trendMetric: document.querySelector("#trend-metric"),
     trendProductInput: document.querySelector("#trend-product-input"),
     trendProductOptions: document.querySelector("#trend-product-options"),
     clearTrendProduct: document.querySelector("#clear-trend-product"),
@@ -204,6 +209,7 @@ function bindEvents() {
   dom.exportProductCsv.addEventListener("click", exportProductCsv);
   dom.clearFilters.addEventListener("click", clearAllFilters);
   dom.trendGrain.addEventListener("change", handleTrendGrainChange);
+  dom.trendMetric.addEventListener("change", handleTrendMetricChange);
   dom.trendProductInput.addEventListener("input", handleTrendProductInput);
   dom.clearTrendProduct.addEventListener("click", clearTrendProduct);
 
@@ -222,6 +228,10 @@ function bindEvents() {
   document.addEventListener("click", handleSettingsTabClick);
   document.addEventListener("click", handleTableSortClick);
   document.addEventListener("click", handleColumnOrderClick);
+  document.addEventListener("dragstart", handleColumnDragStart);
+  document.addEventListener("dragover", handleColumnDragOver);
+  document.addEventListener("drop", handleColumnDrop);
+  document.addEventListener("dragend", handleColumnDragEnd);
 
 }
 
@@ -289,16 +299,73 @@ function handleTableSortClick(event) {
 }
 
 function handleColumnOrderClick(event) {
-  const moveButton = event.target.closest("[data-column-move]");
-  if (moveButton) {
-    moveColumn(moveButton.dataset.columnTable, moveButton.dataset.columnKey, moveButton.dataset.columnMove);
-    return;
-  }
-
   const resetButton = event.target.closest("[data-column-reset]");
   if (resetButton) {
     resetColumnOrder(resetButton.dataset.columnReset);
   }
+}
+
+function handleColumnDragStart(event) {
+  const row = event.target.closest(".column-order-row");
+  if (!row) return;
+
+  columnDrag = {
+    table: row.dataset.columnTable,
+    key: row.dataset.columnKey
+  };
+  row.classList.add("dragging");
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", `${columnDrag.table}:${columnDrag.key}`);
+  }
+}
+
+function handleColumnDragOver(event) {
+  if (!columnDrag) return;
+  const row = event.target.closest(".column-order-row");
+  const list = event.target.closest(".column-order-list");
+  if (!list || list.dataset.columnTable !== columnDrag.table) return;
+
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  clearColumnDropTargets();
+
+  if (!row || row.dataset.columnKey === columnDrag.key) return;
+  const position = getColumnDropPosition(row, event);
+  row.classList.add(position === "after" ? "drag-over-after" : "drag-over-before");
+}
+
+function handleColumnDrop(event) {
+  if (!columnDrag) return;
+  const row = event.target.closest(".column-order-row");
+  const list = event.target.closest(".column-order-list");
+  if (!list || list.dataset.columnTable !== columnDrag.table) return;
+
+  event.preventDefault();
+  const position = row ? getColumnDropPosition(row, event) : "after";
+  reorderColumn(columnDrag.table, columnDrag.key, row?.dataset.columnKey || "", position);
+  clearColumnDragState();
+}
+
+function handleColumnDragEnd() {
+  clearColumnDragState();
+}
+
+function getColumnDropPosition(row, event) {
+  const rect = row.getBoundingClientRect();
+  return event.clientY > rect.top + rect.height / 2 ? "after" : "before";
+}
+
+function clearColumnDropTargets() {
+  document.querySelectorAll(".column-order-row.drag-over-before, .column-order-row.drag-over-after").forEach((row) => {
+    row.classList.remove("drag-over-before", "drag-over-after");
+  });
+}
+
+function clearColumnDragState() {
+  clearColumnDropTargets();
+  document.querySelectorAll(".column-order-row.dragging").forEach((row) => row.classList.remove("dragging"));
+  columnDrag = null;
 }
 
 function updateSortHeaderStates() {
@@ -397,6 +464,24 @@ function moveColumn(table, key, direction) {
   renderProductTable(state.productRows);
 }
 
+function reorderColumn(table, sourceKey, targetKey, position) {
+  const order = normalizeColumnOrder(table, state.columnOrders[table] || []);
+  const sourceIndex = order.indexOf(sourceKey);
+  if (sourceIndex < 0 || (targetKey && sourceKey === targetKey)) return;
+
+  order.splice(sourceIndex, 1);
+  let targetIndex = targetKey ? order.indexOf(targetKey) : order.length;
+  if (targetIndex < 0) targetIndex = order.length;
+  if (position === "after") targetIndex += 1;
+
+  order.splice(targetIndex, 0, sourceKey);
+  state.columnOrders[table] = order;
+  saveColumnOrder(table);
+  renderColumnSettings();
+  renderPivotTable(state.pivotRows);
+  renderProductTable(state.productRows);
+}
+
 function resetColumnOrder(table) {
   if (!DEFAULT_COLUMN_ORDERS[table]) return;
   state.columnOrders[table] = [...DEFAULT_COLUMN_ORDERS[table]];
@@ -414,13 +499,11 @@ function renderColumnSettings() {
 function renderColumnOrderList(table, target) {
   if (!target) return;
   const columns = getTableColumns(table);
+  target.dataset.columnTable = table;
   target.innerHTML = columns.map((column, index) => `
-    <div class="column-order-row">
-      <span>${escapeHtml(column.label)}</span>
-      <div class="column-order-actions">
-        <button class="button compact" type="button" data-column-table="${table}" data-column-key="${column.key}" data-column-move="up" ${index === 0 ? "disabled" : ""}>Up</button>
-        <button class="button compact" type="button" data-column-table="${table}" data-column-key="${column.key}" data-column-move="down" ${index === columns.length - 1 ? "disabled" : ""}>Down</button>
-      </div>
+    <div class="column-order-row" draggable="true" data-column-table="${table}" data-column-key="${column.key}" style="--column-index:${index}">
+      <span class="column-drag-handle" aria-hidden="true"></span>
+      <span class="column-order-name">${escapeHtml(column.label)}</span>
     </div>
   `).join("");
 }
@@ -1218,6 +1301,11 @@ function handleTrendGrainChange() {
   renderTrendTable(getCurrentTrendRecords());
 }
 
+function handleTrendMetricChange() {
+  state.trendMetric = getTrendMetricMode();
+  renderTrendTable(getCurrentTrendRecords());
+}
+
 function clearTrendProduct() {
   state.trendProductQuery = "";
   dom.trendProductInput.value = "";
@@ -1233,6 +1321,7 @@ function renderTrendTable(filteredRecords) {
   if (!dom.trendChart) return;
 
   state.trendGrain = dom.trendGrain.value || state.trendGrain || "week";
+  state.trendMetric = getTrendMetricMode();
   renderTrendProductOptions(filteredRecords);
   const trendRecords = filterTrendProductRecords(filteredRecords);
   const rows = buildTrendRows(trendRecords, state.trendGrain, dom.currentStart.value, dom.currentEnd.value);
@@ -1248,36 +1337,45 @@ function renderTrendTable(filteredRecords) {
 }
 
 function renderTrendLineChart(rows) {
-  const width = 760;
-  const height = 310;
-  const pad = { top: 24, right: 28, bottom: 58, left: 82 };
+  const metricMode = getTrendMetricMode();
+  const showSales = metricMode !== "units";
+  const showUnits = metricMode !== "sales";
+  const showBoth = showSales && showUnits;
+  const width = 860;
+  const height = 360;
+  const pad = { top: 30, right: showBoth ? 92 : 46, bottom: 86, left: 88 };
   const plotWidth = width - pad.left - pad.right;
   const plotHeight = height - pad.top - pad.bottom;
-  const values = rows.map((row) => row.netSales);
-  let minValue = Math.min(0, ...values);
-  let maxValue = Math.max(0, ...values);
-  if (minValue === maxValue) {
-    minValue -= 1;
-    maxValue += 1;
-  }
-
+  const salesScale = getTrendScale(rows.map((row) => row.netSales));
+  const unitsScale = getTrendScale(rows.map((row) => row.netUnits));
+  const primaryScale = showSales ? salesScale : unitsScale;
   const xForIndex = (index) => {
     if (rows.length === 1) return pad.left + plotWidth / 2;
     return pad.left + (index / (rows.length - 1)) * plotWidth;
   };
-  const yForValue = (value) => pad.top + (1 - (value - minValue) / (maxValue - minValue)) * plotHeight;
-  const points = rows.map((row, index) => ({
+  const yForValue = (value, scale) => pad.top + (1 - (value - scale.min) / (scale.max - scale.min)) * plotHeight;
+  const salesPoints = rows.map((row, index) => ({
     ...row,
     x: xForIndex(index),
-    y: yForValue(row.netSales)
+    y: yForValue(row.netSales, salesScale)
   }));
-  const linePath = points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" ");
-  const baselineY = yForValue(0);
-  const areaPath = `${linePath} L ${points[points.length - 1].x.toFixed(2)} ${baselineY.toFixed(2)} L ${points[0].x.toFixed(2)} ${baselineY.toFixed(2)} Z`;
-  const ticks = buildTrendYAxisTicks(minValue, maxValue, 4);
-  const xLabelIndexes = getTrendXLabelIndexes(rows.length);
+  const unitsPoints = rows.map((row, index) => ({
+    ...row,
+    x: xForIndex(index),
+    y: yForValue(row.netUnits, unitsScale)
+  }));
+  const primaryTicks = buildTrendYAxisTicks(primaryScale.min, primaryScale.max, 4);
+  const secondaryTicks = showBoth ? buildTrendYAxisTicks(unitsScale.min, unitsScale.max, 4) : [];
+  const salesLinePath = buildTrendPath(salesPoints);
+  const unitsLinePath = buildTrendPath(unitsPoints);
+  const salesBaselineY = yForValue(0, salesScale);
+  const unitsBaselineY = yForValue(0, unitsScale);
+  const baselineY = showSales ? salesBaselineY : unitsBaselineY;
+  const salesAreaPath = buildTrendAreaPath(salesPoints, salesBaselineY);
+  const unitsAreaPath = buildTrendAreaPath(unitsPoints, unitsBaselineY);
   const latest = rows[rows.length - 1];
   const latestChange = latest.salesChange === null ? "" : `${latest.salesChange >= 0 ? "+" : ""}${formatCurrency(latest.salesChange)}`;
+  const primaryTickFormatter = showSales ? formatCompactCurrency : formatNumber;
 
   return `
     <div class="trend-summary">
@@ -1298,29 +1396,109 @@ function renderTrendLineChart(rows) {
         <strong class="${latest.salesChange > 0 ? "delta-positive" : latest.salesChange < 0 ? "delta-negative" : ""}">${latestChange}</strong>
       </div>
     </div>
-    <svg class="trend-line-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Net sales trend">
+    <div class="trend-legend" aria-hidden="true">
+      ${showSales ? `<span><i class="legend-swatch sales"></i>Sales $</span>` : ""}
+      ${showUnits ? `<span><i class="legend-swatch units"></i>Units</span>` : ""}
+    </div>
+    <svg class="trend-line-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Trend line">
       <rect x="0" y="0" width="${width}" height="${height}" class="trend-svg-bg"></rect>
-      ${ticks.map((tick) => {
-        const y = yForValue(tick);
+      ${primaryTicks.map((tick) => {
+        const y = yForValue(tick, primaryScale);
         return `
           <line x1="${pad.left}" y1="${y.toFixed(2)}" x2="${width - pad.right}" y2="${y.toFixed(2)}" class="trend-grid-line"></line>
-          <text x="${pad.left - 12}" y="${(y + 4).toFixed(2)}" class="trend-axis-label" text-anchor="end">${escapeHtml(formatCompactCurrency(tick))}</text>
+          <text x="${pad.left - 12}" y="${(y + 4).toFixed(2)}" class="trend-axis-label ${showSales ? "sales-axis" : "units-axis"}" text-anchor="end">${escapeHtml(primaryTickFormatter(tick))}</text>
         `;
       }).join("")}
-      <line x1="${pad.left}" y1="${baselineY.toFixed(2)}" x2="${width - pad.right}" y2="${baselineY.toFixed(2)}" class="trend-zero-line"></line>
-      <path d="${areaPath}" class="trend-area"></path>
-      <path d="${linePath}" class="trend-line"></path>
-      ${points.map((point) => `
-        <circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="4.5" class="trend-point">
-          <title>${escapeHtml(`${point.periodLabel}: ${formatCurrency(point.netSales)} | ${formatNumber(point.netUnits)} units`)}</title>
-        </circle>
-      `).join("")}
-      ${xLabelIndexes.map((index) => {
-        const point = points[index];
-        return `<text x="${point.x.toFixed(2)}" y="${height - 22}" class="trend-axis-label trend-x-label" text-anchor="middle">${escapeHtml(shortTrendLabel(point.periodLabel, state.trendGrain))}</text>`;
+      ${secondaryTicks.map((tick) => {
+        const y = yForValue(tick, unitsScale);
+        return `<text x="${width - pad.right + 14}" y="${(y + 4).toFixed(2)}" class="trend-axis-label units-axis" text-anchor="start">${escapeHtml(formatNumber(tick))}</text>`;
       }).join("")}
+      <line x1="${pad.left}" y1="${baselineY.toFixed(2)}" x2="${width - pad.right}" y2="${baselineY.toFixed(2)}" class="trend-zero-line"></line>
+      ${showSales ? `<path d="${salesAreaPath}" class="trend-area sales-area"></path>` : ""}
+      ${showUnits && !showSales ? `<path d="${unitsAreaPath}" class="trend-area units-area"></path>` : ""}
+      ${showSales ? `<path d="${salesLinePath}" class="trend-line sales-line"></path>` : ""}
+      ${showUnits ? `<path d="${unitsLinePath}" class="trend-line units-line"></path>` : ""}
+      ${rows.map((row, index) => {
+        const point = showSales ? salesPoints[index] : unitsPoints[index];
+        const y = height - 32;
+        return `<text x="${point.x.toFixed(2)}" y="${y}" class="trend-axis-label trend-x-label" text-anchor="end" transform="rotate(-35 ${point.x.toFixed(2)} ${y})">${escapeHtml(row.axisLabel || row.periodLabel)}</text>`;
+      }).join("")}
+      ${rows.map((row, index) => renderTrendPointGroup(row, salesPoints[index], unitsPoints[index], {
+        showSales,
+        showUnits,
+        width,
+        height,
+        pad
+      })).join("")}
     </svg>
   `;
+}
+
+function getTrendMetricMode() {
+  const value = dom.trendMetric?.value || state.trendMetric || "sales";
+  return TREND_METRIC_OPTIONS.has(value) ? value : "sales";
+}
+
+function getTrendScale(values) {
+  let min = Math.min(0, ...values);
+  let max = Math.max(0, ...values);
+  if (min === max) {
+    min -= 1;
+    max += 1;
+  }
+  const padding = (max - min) * 0.08;
+  return {
+    min: min < 0 ? min - padding : 0,
+    max: max + padding
+  };
+}
+
+function buildTrendPath(points) {
+  return points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" ");
+}
+
+function buildTrendAreaPath(points, baselineY) {
+  const linePath = buildTrendPath(points);
+  return `${linePath} L ${points[points.length - 1].x.toFixed(2)} ${baselineY.toFixed(2)} L ${points[0].x.toFixed(2)} ${baselineY.toFixed(2)} Z`;
+}
+
+function renderTrendPointGroup(row, salesPoint, unitsPoint, options) {
+  const visiblePoints = [
+    options.showSales ? salesPoint : null,
+    options.showUnits ? unitsPoint : null
+  ].filter(Boolean);
+  const anchorPoint = visiblePoints.reduce((top, point) => point.y < top.y ? point : top, visiblePoints[0]);
+  const tooltip = getTrendTooltipPosition(anchorPoint.x, anchorPoint.y, options);
+  const periodType = state.trendGrain === "week" ? "Week" : state.trendGrain === "month" ? "Month" : "Day";
+  const label = `${periodType} ${row.periodLabel}, sales ${formatCurrency(row.netSales)}, units ${formatNumber(row.netUnits)}`;
+
+  return `
+    <g class="trend-point-group" tabindex="0" aria-label="${escapeHtml(label)}">
+      ${options.showSales ? `<circle cx="${salesPoint.x.toFixed(2)}" cy="${salesPoint.y.toFixed(2)}" r="4.7" class="trend-point-dot trend-point-sales"></circle>` : ""}
+      ${options.showUnits ? `<circle cx="${unitsPoint.x.toFixed(2)}" cy="${unitsPoint.y.toFixed(2)}" r="4.7" class="trend-point-dot trend-point-units"></circle>` : ""}
+      <g class="trend-tooltip" transform="translate(${tooltip.x.toFixed(2)} ${tooltip.y.toFixed(2)})">
+        <rect x="0" y="0" width="${tooltip.width}" height="${tooltip.height}" rx="8" class="trend-tooltip-card"></rect>
+        <rect x="0" y="0" width="5" height="${tooltip.height}" rx="2.5" class="trend-tooltip-accent"></rect>
+        <text x="14" y="20" class="trend-tooltip-label">${escapeHtml(periodType)}</text>
+        <text x="14" y="37" class="trend-tooltip-value">${escapeHtml(row.periodLabel)}</text>
+        <text x="14" y="57" class="trend-tooltip-label">Sales</text>
+        <text x="82" y="57" class="trend-tooltip-value">${escapeHtml(formatCurrency(row.netSales))}</text>
+        <text x="14" y="75" class="trend-tooltip-label">Units</text>
+        <text x="82" y="75" class="trend-tooltip-value">${escapeHtml(formatNumber(row.netUnits))}</text>
+      </g>
+    </g>
+  `;
+}
+
+function getTrendTooltipPosition(anchorX, anchorY, options) {
+  const width = 218;
+  const height = 88;
+  const minX = options.pad.left + 4;
+  const maxX = options.width - options.pad.right - width - 4;
+  const x = Math.min(Math.max(anchorX - width / 2, minX), maxX);
+  const canShowAbove = anchorY - height - 14 >= options.pad.top;
+  const y = canShowAbove ? anchorY - height - 14 : anchorY + 16;
+  return { x, y, width, height };
 }
 
 function buildTrendYAxisTicks(minValue, maxValue, count) {
@@ -1329,22 +1507,6 @@ function buildTrendYAxisTicks(minValue, maxValue, count) {
     ticks.push(minValue + ((maxValue - minValue) * index / count));
   }
   return ticks;
-}
-
-function getTrendXLabelIndexes(length) {
-  if (length <= 1) return [0];
-  if (length <= 6) return Array.from({ length }, (_, index) => index);
-  const indexes = new Set();
-  const maxLabels = 6;
-  for (let index = 0; index < maxLabels; index += 1) {
-    indexes.add(Math.round(index * (length - 1) / (maxLabels - 1)));
-  }
-  return Array.from(indexes).sort((a, b) => a - b);
-}
-
-function shortTrendLabel(label, grain) {
-  if (grain === "week") return label.slice(0, 10);
-  return label;
 }
 
 function renderTrendProductOptions(records) {
@@ -1437,6 +1599,7 @@ function buildTrendRows(records, grain = "week", rangeStart = "", rangeEnd = "")
         periodStart: bucket.start,
         periodEnd: bucket.end,
         periodLabel: bucket.label,
+        axisLabel: bucket.axisLabel,
         netSales: 0,
         netUnits: 0,
         orders: new Set(),
@@ -1471,10 +1634,12 @@ function buildWeeklyTrendRows(records) {
 function getTrendBucketForDateKey(key, grain, rangeStart = "", rangeEnd = "") {
   if (!key) return null;
   if (grain === "day") {
+    const label = formatTrendDateKey(key);
     return {
       start: key,
       end: key,
-      label: key
+      label,
+      axisLabel: label
     };
   }
 
@@ -1487,8 +1652,9 @@ function getTrendBucketForDateKey(key, grain, rangeStart = "", rangeEnd = "") {
       start,
       end,
       label: display.start === start && display.end === end
-        ? `${year}-${String(month).padStart(2, "0")}`
-        : `${display.start} to ${display.end}`
+        ? formatTrendMonthLabel(start)
+        : formatTrendPeriodLabel(display.start, display.end),
+      axisLabel: formatTrendMonthLabel(start)
     };
   }
 
@@ -1501,7 +1667,8 @@ function getTrendBucketForDateKey(key, grain, rangeStart = "", rangeEnd = "") {
   return {
     start: bucketStart,
     end: bucketEnd,
-    label: `${display.start} to ${display.end}`
+    label: formatTrendPeriodLabel(display.start, display.end),
+    axisLabel: formatTrendDateKey(display.start)
   };
 }
 
@@ -1518,6 +1685,31 @@ function getTrendGrainLabel(grain) {
   if (grain === "day") return "Daily";
   if (grain === "month") return "Monthly";
   return "Weekly";
+}
+
+function formatTrendPeriodLabel(start, end) {
+  const startLabel = formatTrendDateKey(start);
+  const endLabel = formatTrendDateKey(end);
+  return startLabel === endLabel ? startLabel : `${startLabel} to ${endLabel}`;
+}
+
+function formatTrendDateKey(key) {
+  if (!key) return "";
+  const date = dateFromKey(key);
+  if (Number.isNaN(date.getTime())) return key;
+  const month = TREND_MONTH_ABBRS[date.getUTCMonth()] || "";
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  const year = String(date.getUTCFullYear()).slice(-2);
+  return `${month}-${day}-${year}`;
+}
+
+function formatTrendMonthLabel(key) {
+  if (!key) return "";
+  const date = dateFromKey(key);
+  if (Number.isNaN(date.getTime())) return key;
+  const month = TREND_MONTH_ABBRS[date.getUTCMonth()] || "";
+  const year = String(date.getUTCFullYear()).slice(-2);
+  return `${month}-${year}`;
 }
 
 function buildPivot(currentRecords, comparisonRecords, hasComparison) {
@@ -1671,7 +1863,7 @@ function renderPivotTable(rows) {
 
 function renderTableHeader(table, column) {
   return `
-    <th class="${column.numeric ? "numeric" : ""}">
+    <th class="${tableCellClass(column)}">
       <button data-table-sort="${table}" data-sort-key="${column.key}" type="button">
         <span>${escapeHtml(column.label)}</span>
         <span class="sort-icon" aria-hidden="true"></span>
@@ -1683,15 +1875,23 @@ function renderTableHeader(table, column) {
 function renderPivotCell(row, column) {
   if (column.key === "value" || column.key === "status") {
     const value = row[column.key] || "";
-    return renderTextCell(value);
+    return renderTextCell(value, column);
   }
 
   const value = formatPivotCellValue(row, column.key);
-  return `<td class="numeric ${getDeltaClass(row, column.key)}">${value}</td>`;
+  return `<td class="${tableCellClass(column, getDeltaClass(row, column.key))}">${value}</td>`;
 }
 
-function renderTextCell(value) {
-  return `<td><div class="clip" title="${escapeHtml(value)}">${escapeHtml(value)}</div></td>`;
+function renderTextCell(value, column) {
+  return `<td class="${tableCellClass(column)}"><div class="clip" title="${escapeHtml(value)}">${escapeHtml(value)}</div></td>`;
+}
+
+function tableCellClass(column, extra = "") {
+  return [
+    column?.numeric ? "numeric" : "",
+    column?.key ? `col-${column.key}` : "",
+    extra
+  ].filter(Boolean).join(" ");
 }
 
 function formatPivotCellValue(row, key) {
@@ -1911,11 +2111,11 @@ function renderProductTable(rows) {
 
 function renderProductCell(row, column) {
   if (column.key === "productTitle" || column.key === "sku" || column.key === "status") {
-    return renderTextCell(row[column.key] || "");
+    return renderTextCell(row[column.key] || "", column);
   }
 
   const value = formatProductCellValue(row, column.key);
-  return `<td class="numeric ${getDeltaClass(row, column.key)}">${value}</td>`;
+  return `<td class="${tableCellClass(column, getDeltaClass(row, column.key))}">${value}</td>`;
 }
 
 function formatProductCellValue(row, key) {
@@ -1929,8 +2129,8 @@ function formatProductCellValue(row, key) {
 }
 
 function renderProductTotalCell(column, totals) {
-  if (column.key === "productTitle") return "<td>Total</td>";
-  if (column.key === "sku" || column.key === "status") return "<td></td>";
+  if (column.key === "productTitle") return `<td class="${tableCellClass(column)}">Total</td>`;
+  if (column.key === "sku" || column.key === "status") return `<td class="${tableCellClass(column)}"></td>`;
 
   let value = "";
   if (column.key === "netSales") value = formatCurrency(totals.totalSales);
@@ -1939,7 +2139,7 @@ function renderProductTotalCell(column, totals) {
   if (column.key === "change") value = totals.hasComparison ? formatCurrency(totals.totalChange) : "";
   if (column.key === "unitChange") value = totals.hasComparison ? formatNumber(totals.totalUnitChange) : "";
   if (column.key === "changePct") value = totals.hasComparison ? (totals.totalChangePct === null ? "n/a" : formatPercent(totals.totalChangePct)) : "";
-  return `<td class="numeric">${value}</td>`;
+  return `<td class="${tableCellClass(column)}">${value}</td>`;
 }
 
 function buildRegionalTopProducts(records, comparisonRecords = [], hasComparison = false) {
