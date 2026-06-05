@@ -165,7 +165,9 @@ function collectDom() {
     sortDir: document.querySelector("#sort-dir"),
     rowLimit: document.querySelector("#row-limit"),
     exportCsv: document.querySelector("#export-csv"),
+    exportPivotTableCsv: document.querySelector("#export-pivot-table-csv"),
     exportProductCsv: document.querySelector("#export-product-csv"),
+    exportRegionalCsv: document.querySelector("#export-regional-csv"),
     clearFilters: document.querySelector("#clear-filters"),
     filters: document.querySelector("#filters"),
     status: document.querySelector("#status"),
@@ -221,7 +223,9 @@ function bindEvents() {
   dom.rowLimit.addEventListener("change", renderAll);
   dom.regionalProductSort.addEventListener("change", renderAll);
   dom.exportCsv.addEventListener("click", exportPivotCsv);
+  dom.exportPivotTableCsv.addEventListener("click", exportPivotCsv);
   dom.exportProductCsv.addEventListener("click", exportProductCsv);
+  dom.exportRegionalCsv.addEventListener("click", exportRegionalTopProductsCsv);
   dom.clearFilters.addEventListener("click", clearAllFilters);
   dom.trendGrain.addEventListener("change", handleTrendGrainChange);
   dom.trendMetric.addEventListener("change", handleTrendMetricChange);
@@ -2775,6 +2779,26 @@ function exportProductCsv() {
   const start = dom.currentStart.value || "all";
   const end = dom.currentEnd.value || todayKey();
   downloadFile(`product-results-${start}-to-${end}.csv`, lines.map(csvLine).join("\n"), "text/csv");
+}
+
+function exportRegionalTopProductsCsv() {
+  const rows = state.regionalProductRows || [];
+  const headers = ["Region", "Rank", "Pos Change", "Product", "SKU", "Net Sales", "Net Units Sold"];
+  const lines = [
+    headers,
+    ...rows.map((row) => [
+      row.region,
+      row.rank,
+      row.rankChange,
+      row.productTitle,
+      row.sku,
+      row.netSales,
+      row.netUnits
+    ])
+  ];
+  const start = dom.currentStart.value || "all";
+  const end = dom.currentEnd.value || todayKey();
+  downloadFile(`regional-top-20-${start}-to-${end}.csv`, lines.map(csvLine).join("\n"), "text/csv");
 }
 
 function getPivotExportValue(row, key) {
