@@ -445,6 +445,127 @@ select:focus {
   min-width: 0;
 }
 
+.trade-stack {
+  align-content: start;
+}
+
+.trade-analysis {
+  padding: 14px 16px 16px;
+}
+
+.trade-analysis ul,
+.trade-region-head ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ink);
+}
+
+.trade-analysis li,
+.trade-region-head li {
+  margin: 0 0 8px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.trade-summary-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  padding: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.trade-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(130px, 1fr));
+  gap: 8px;
+}
+
+.trade-summary-card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-2);
+}
+
+.trade-summary-card span,
+.trade-summary-card em,
+.trade-summary-card small {
+  display: block;
+}
+
+.trade-summary-card span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 860;
+  text-transform: uppercase;
+}
+
+.trade-summary-card strong {
+  display: block;
+  margin-top: 5px;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.trade-summary-card em,
+.trade-summary-card small {
+  margin-top: 4px;
+  font-style: normal;
+  font-size: 12px;
+}
+
+.trade-summary-card em {
+  color: var(--muted);
+}
+
+.trade-brand-scroll {
+  max-height: 460px;
+}
+
+.trade-brand-table td:first-child,
+.trade-regional-table td:nth-child(2) {
+  min-width: 220px;
+  max-width: 420px;
+}
+
+.trade-brand-table td:last-child {
+  min-width: 280px;
+  max-width: 520px;
+}
+
+.trade-regional-sections {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+}
+
+.trade-region-section {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.trade-region-head {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.3fr) minmax(0, 1fr);
+  gap: 14px;
+  padding: 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.trade-region-head h3 {
+  margin: 2px 0 0;
+  font-family: var(--font-primary);
+  font-size: 16px;
+  line-height: 1.2;
+}
+
 .status-bar {
   min-height: 38px;
   display: flex;
@@ -1425,7 +1546,9 @@ th.numeric {
 
   .kpi-grid,
   .date-grid,
-  .select-row {
+  .select-row,
+  .trade-summary-pair,
+  .trade-region-head {
     grid-template-columns: 1fr;
   }
 

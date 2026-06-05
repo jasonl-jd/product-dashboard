@@ -123,6 +123,7 @@
 
         <div class="view-tabs" role="tablist" aria-label="Dashboard views">
           <button class="tab-button active" type="button" role="tab" aria-selected="true" data-view-tab="performance">Performance</button>
+          <button class="tab-button" type="button" role="tab" aria-selected="false" data-view-tab="trade">Trade Meeting</button>
           <button class="tab-button" type="button" role="tab" aria-selected="false" data-view-tab="compare">Product Compare</button>
           <button class="tab-button" type="button" role="tab" aria-selected="false" data-view-tab="regional">Regional Top 20</button>
         </div>
@@ -190,6 +191,67 @@
                 </div>
                 <div id="bar-chart" class="bar-chart"></div>
               </article>
+            </section>
+          </div>
+        </section>
+
+        <section class="dashboard-view" data-view-panel="trade" role="tabpanel" hidden>
+          <div class="analysis-stack trade-stack">
+            <section class="panel trade-brief-panel">
+              <div class="panel-head panel-head-with-control">
+                <div>
+                  <span class="panel-kicker">Weekly Trade</span>
+                  <h2>Trade Meeting Prep</h2>
+                </div>
+                <span id="trade-week-label" class="pill">Fiscal Week</span>
+              </div>
+              <div id="trade-analysis" class="trade-analysis"></div>
+            </section>
+
+            <section class="panel table-panel">
+              <div class="panel-head panel-head-with-control">
+                <div>
+                  <span class="panel-kicker">Brand Performance</span>
+                  <h2>Top 10 Brands</h2>
+                </div>
+                <button id="export-trade-brand-csv" class="button compact" type="button">Export Brand CSV</button>
+              </div>
+              <div class="trade-summary-pair">
+                <div>
+                  <div class="section-title">Full Price / Markdown</div>
+                  <div id="trade-status-summary" class="trade-summary-grid"></div>
+                </div>
+                <div>
+                  <div class="section-title">Footwear / Apparel / Accessories</div>
+                  <div id="trade-group-summary" class="trade-summary-grid"></div>
+                </div>
+              </div>
+              <div class="table-scroll trade-brand-scroll">
+                <table class="trade-brand-table">
+                  <thead>
+                    <tr>
+                      <th>Brand</th>
+                      <th>Net Sales</th>
+                      <th>Net Units</th>
+                      <th>Sales Change</th>
+                      <th>Change %</th>
+                      <th>Key SKUs</th>
+                    </tr>
+                  </thead>
+                  <tbody id="trade-brand-tbody"></tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="panel table-panel">
+              <div class="panel-head panel-head-with-control">
+                <div>
+                  <span class="panel-kicker">Regional Top Sellers</span>
+                  <h2>Regional Slide Tables</h2>
+                </div>
+                <button id="export-trade-regional-csv" class="button compact" type="button">Export Regional CSV</button>
+              </div>
+              <div id="trade-regional-sections" class="trade-regional-sections"></div>
             </section>
           </div>
         </section>

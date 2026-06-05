@@ -116,6 +116,9 @@ const state = {
   pivotRows: [],
   productRows: [],
   regionalProductRows: [],
+  tradeBrandRows: [],
+  tradeRegionalRows: [],
+  tradePeriods: null,
   trendProductQuery: "",
   trendGrain: "week",
   trendMetric: "sales",
@@ -189,6 +192,14 @@ function collectDom() {
     trendProductOptions: document.querySelector("#trend-product-options"),
     clearTrendProduct: document.querySelector("#clear-trend-product"),
     trendChart: document.querySelector("#trend-chart"),
+    tradeWeekLabel: document.querySelector("#trade-week-label"),
+    tradeAnalysis: document.querySelector("#trade-analysis"),
+    tradeStatusSummary: document.querySelector("#trade-status-summary"),
+    tradeGroupSummary: document.querySelector("#trade-group-summary"),
+    tradeBrandTbody: document.querySelector("#trade-brand-tbody"),
+    tradeRegionalSections: document.querySelector("#trade-regional-sections"),
+    exportTradeBrandCsv: document.querySelector("#export-trade-brand-csv"),
+    exportTradeRegionalCsv: document.querySelector("#export-trade-regional-csv"),
     compareGrain: document.querySelector("#compare-grain"),
     compareMetric: document.querySelector("#compare-metric"),
     compareProductInput: document.querySelector("#compare-product-input"),
@@ -231,6 +242,8 @@ function bindEvents() {
   dom.trendMetric.addEventListener("change", handleTrendMetricChange);
   dom.trendProductInput.addEventListener("input", handleTrendProductInput);
   dom.clearTrendProduct.addEventListener("click", clearTrendProduct);
+  dom.exportTradeBrandCsv.addEventListener("click", exportTradeBrandCsv);
+  dom.exportTradeRegionalCsv.addEventListener("click", exportTradeRegionalCsv);
   dom.compareGrain.addEventListener("change", handleCompareGrainChange);
   dom.compareMetric.addEventListener("change", handleCompareMetricChange);
   dom.compareProductInput.addEventListener("input", handleCompareProductInput);
@@ -1157,6 +1170,7 @@ function renderAll() {
   renderKpis(currentSummary, compareSummary, hasComparison);
   renderTrendTable(current);
   renderProductCompare(current);
+  renderTradeMeeting(filtered);
   state.pivotRows = buildPivot(current, comparison, hasComparison);
   state.productRows = buildProductResults(current, comparison, hasComparison);
   state.regionalProductRows = buildRegionalTopProducts(current, comparison, hasComparison);
@@ -2654,6 +2668,452 @@ function renderRegionalTopProducts(rows) {
   `).join("");
 }
 
+function renderTradeMeeting(filteredRecords) {
+  if (!dom.tradeBrandTbody) return;
+
+  const periods = getTradePeriods();
+  const current = filteredRecords.filter((record) => inDateRange(record, periods.current.start, periods.current.end));
+  const comparison = periods.comparison
+    ? filteredRecords.filter((record) => inDateRange(record, periods.comparison.start, periods.comparison.end))
+    : [];
+  const hasComparison = Boolean(periods.comparison);
+
+  const currentSummary = summarize(current);
+  const comparisonSummary = summarize(comparison);
+  const statusRows = buildTradeBreakdownRows(current, comparison, hasComparison, getTradeStatusCategory, ["Full Price", "Markdown"]);
+  const groupRows = buildTradeBreakdownRows(current, comparison, hasComparison, getTradeProductGroup, ["Footwear", "Apparel", "Accessories"]);
+  const brandRows = buildTradeBrandRows(current, comparison, hasComparison);
+  const regionalRows = buildTradeRegionalTopProducts(current, comparison, hasComparison);
+
+  state.tradePeriods = periods;
+  state.tradeBrandRows = brandRows;
+  state.tradeRegionalRows = regionalRows;
+
+  dom.tradeWeekLabel.textContent = `${formatTradeDateRange(periods.current)} | Compare ${formatTradeDateRange(periods.comparison)}`;
+  renderTradeAnalysis(buildTradeAnalysisBullets({
+    currentSummary,
+    comparisonSummary,
+    hasComparison,
+    statusRows,
+    groupRows,
+    brandRows,
+    currentRecords: current
+  }));
+  renderTradeSummaryGrid(dom.tradeStatusSummary, statusRows);
+  renderTradeSummaryGrid(dom.tradeGroupSummary, groupRows);
+  renderTradeBrandTable(brandRows.slice(0, 10));
+  renderTradeRegionalSections(regionalRows);
+}
+
+function getTradePeriods() {
+  const current = getFiscalWeekRangeForSelection(dom.currentStart.value, dom.currentEnd.value);
+  let comparison = null;
+
+  if (dom.compareStart.value || dom.compareEnd.value) {
+    comparison = getFiscalWeekRangeForSelection(dom.compareStart.value, dom.compareEnd.value);
+  } else if (current) {
+    comparison = getPreviousFiscalWeekRange(current);
+  }
+
+  return { current, comparison };
+}
+
+function getFiscalWeekRangeForSelection(startKey, endKey) {
+  if (startKey && endKey && isExactFiscalWeek(startKey, endKey)) {
+    return { start: startKey, end: endKey };
+  }
+
+  const summary = getDatasetDateSummary();
+  const anchor = endKey || startKey || summary?.max || todayKey();
+  return getFiscalWeekRange(anchor);
+}
+
+function getFiscalWeekRange(anchorKey) {
+  const anchor = dateFromKey(anchorKey);
+  const start = addDays(anchor, -anchor.getUTCDay());
+  const end = addDays(start, 6);
+  return {
+    start: dateKey(start),
+    end: dateKey(end)
+  };
+}
+
+function getPreviousFiscalWeekRange(range) {
+  const end = addDays(dateFromKey(range.start), -1);
+  const start = addDays(end, -6);
+  return {
+    start: dateKey(start),
+    end: dateKey(end)
+  };
+}
+
+function isExactFiscalWeek(startKey, endKey) {
+  const start = dateFromKey(startKey);
+  const end = dateFromKey(endKey);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
+  const days = Math.round((end - start) / 86400000);
+  return start.getUTCDay() === 0 && days === 6;
+}
+
+function buildTradeBreakdownRows(currentRecords, comparisonRecords, hasComparison, getter, labels) {
+  const currentMap = aggregateTradeBreakdown(currentRecords, getter);
+  const comparisonMap = hasComparison ? aggregateTradeBreakdown(comparisonRecords, getter) : new Map();
+
+  return labels.map((label) => {
+    const current = currentMap.get(label) || emptyMetricAggregate();
+    const comparison = comparisonMap.get(label) || emptyMetricAggregate();
+    const change = hasComparison ? current.netSales - comparison.netSales : null;
+    return {
+      label,
+      netSales: current.netSales,
+      netUnits: current.netUnits,
+      compareSales: hasComparison ? comparison.netSales : null,
+      change,
+      changePct: hasComparison ? percentChange(current.netSales, comparison.netSales) : null
+    };
+  });
+}
+
+function aggregateTradeBreakdown(records, getter) {
+  const map = new Map();
+  for (const record of records) {
+    const label = getter(record);
+    if (!label || label === BLANK) continue;
+    if (!map.has(label)) map.set(label, emptyMetricAggregate());
+    const aggregate = map.get(label);
+    aggregate.netSales += record.netSales;
+    aggregate.netUnits += record.netUnits;
+  }
+  return map;
+}
+
+function emptyMetricAggregate() {
+  return {
+    netSales: 0,
+    netUnits: 0
+  };
+}
+
+function getTradeStatusCategory(record) {
+  const status = normalizeStatus(record.status);
+  if (status === "Full Price" || status === "Markdown") return status;
+  return "";
+}
+
+function getTradeProductGroup(record) {
+  const text = `${cleanText(record.group)} ${cleanText(record.department)}`.toLocaleLowerCase();
+  if (text.includes("footwear")) return "Footwear";
+  if (text.includes("apparel")) return "Apparel";
+  if (text.includes("accessor")) return "Accessories";
+  return cleanText(record.group) || cleanText(record.department) || BLANK;
+}
+
+function buildTradeBrandRows(currentRecords, comparisonRecords, hasComparison) {
+  const currentMap = aggregateTradeBrands(currentRecords);
+  const comparisonMap = hasComparison ? aggregateTradeBrands(comparisonRecords) : new Map();
+  const keys = new Set([...currentMap.keys(), ...comparisonMap.keys()]);
+
+  return Array.from(keys)
+    .map((brand) => {
+      const current = currentMap.get(brand) || emptyTradeBrandAggregate(brand);
+      const comparison = comparisonMap.get(brand) || emptyTradeBrandAggregate(brand);
+      const change = hasComparison ? current.netSales - comparison.netSales : null;
+      const topSkus = Array.from(current.products.values())
+        .sort((a, b) => b.netSales - a.netSales || collator.compare(a.productTitle, b.productTitle))
+        .slice(0, 3);
+
+      return {
+        brand,
+        netSales: current.netSales,
+        netUnits: current.netUnits,
+        compareSales: hasComparison ? comparison.netSales : null,
+        change,
+        changePct: hasComparison ? percentChange(current.netSales, comparison.netSales) : null,
+        topSkus,
+        keySkuText: formatTradeKeySkus(topSkus)
+      };
+    })
+    .filter((row) => row.netSales !== 0 || row.netUnits !== 0)
+    .sort((a, b) => b.netSales - a.netSales || collator.compare(a.brand, b.brand));
+}
+
+function aggregateTradeBrands(records) {
+  const map = new Map();
+  for (const record of records) {
+    const brand = cleanDimension(record.brand);
+    if (isHiddenResultValue(brand)) continue;
+    if (!map.has(brand)) map.set(brand, emptyTradeBrandAggregate(brand));
+    const aggregate = map.get(brand);
+    aggregate.netSales += record.netSales;
+    aggregate.netUnits += record.netUnits;
+
+    const productKey = getProductKey(record);
+    if (!aggregate.products.has(productKey)) {
+      aggregate.products.set(productKey, {
+        productKey,
+        sku: formatDisplaySku(record.sku) || BLANK,
+        productTitle: record.productTitle || BLANK,
+        netSales: 0,
+        netUnits: 0,
+        statusBreakdown: new Map()
+      });
+    }
+    const product = aggregate.products.get(productKey);
+    product.netSales += record.netSales;
+    product.netUnits += record.netUnits;
+    addStatusBreakdown(product.statusBreakdown, record);
+  }
+
+  for (const aggregate of map.values()) {
+    for (const product of aggregate.products.values()) {
+      product.status = getStatusLabel(product.statusBreakdown);
+    }
+  }
+
+  return map;
+}
+
+function emptyTradeBrandAggregate(brand) {
+  return {
+    brand,
+    netSales: 0,
+    netUnits: 0,
+    products: new Map()
+  };
+}
+
+function formatTradeKeySkus(products) {
+  return products
+    .map((product) => `${product.sku} | ${product.productTitle} (${formatCurrency(product.netSales)})`)
+    .join("; ");
+}
+
+function buildTradeAnalysisBullets({ currentSummary, comparisonSummary, hasComparison, statusRows, groupRows, brandRows, currentRecords }) {
+  const topStatus = getTopMetricRow(statusRows);
+  const topGroup = getTopMetricRow(groupRows);
+  const topBrand = brandRows[0];
+  const biggestGain = hasComparison ? brandRows.slice().sort((a, b) => (b.change || 0) - (a.change || 0))[0] : null;
+  const biggestDecline = hasComparison ? brandRows.slice().sort((a, b) => (a.change || 0) - (b.change || 0))[0] : null;
+  const topSku = Array.from(aggregateProducts(currentRecords).values())
+    .sort((a, b) => b.netSales - a.netSales || collator.compare(a.productTitle, b.productTitle))[0];
+  const bullets = [
+    `Fiscal week ${formatTradeDateRange(state.tradePeriods?.current)} delivered ${formatCurrency(currentSummary.netSales)} on ${formatNumber(currentSummary.netUnits)} units${hasComparison ? `, ${formatTradeMovement(currentSummary.netSales, comparisonSummary.netSales)} vs compare week` : ""}.`
+  ];
+
+  if (topStatus) {
+    bullets.push(`${topStatus.label} led price status performance at ${formatCurrency(topStatus.netSales)} and ${formatNumber(topStatus.netUnits)} units${hasComparison ? `, ${formatTradeMovement(topStatus.netSales, topStatus.compareSales)}` : ""}.`);
+  }
+  if (topGroup) {
+    bullets.push(`${topGroup.label} led product groups at ${formatCurrency(topGroup.netSales)} and ${formatNumber(topGroup.netUnits)} units${hasComparison ? `, ${formatTradeMovement(topGroup.netSales, topGroup.compareSales)}` : ""}.`);
+  }
+  if (topBrand) {
+    bullets.push(`${topBrand.brand} was the top brand at ${formatCurrency(topBrand.netSales)}${hasComparison ? `, ${formatTradeMovement(topBrand.netSales, topBrand.compareSales)}` : ""}.`);
+  }
+  if (topSku) {
+    bullets.push(`Key SKU driver: ${topSku.sku} | ${topSku.productTitle} at ${formatCurrency(topSku.netSales)} and ${formatNumber(topSku.netUnits)} units.`);
+  }
+  if (hasComparison && biggestGain && biggestGain.change > 0) {
+    bullets.push(`Largest brand riser: ${biggestGain.brand}, up ${formatCurrency(Math.abs(biggestGain.change))}${biggestGain.changePct === null ? "" : ` (${formatSignedPercent(biggestGain.changePct)})`}.`);
+  }
+  if (hasComparison && biggestDecline && biggestDecline.change < 0) {
+    bullets.push(`Largest brand faller: ${biggestDecline.brand}, down ${formatCurrency(Math.abs(biggestDecline.change))}${biggestDecline.changePct === null ? "" : ` (${formatSignedPercent(biggestDecline.changePct)})`}.`);
+  }
+
+  return bullets;
+}
+
+function getTopMetricRow(rows) {
+  return rows
+    .filter((row) => row.netSales !== 0 || row.netUnits !== 0)
+    .sort((a, b) => b.netSales - a.netSales || b.netUnits - a.netUnits)[0] || null;
+}
+
+function renderTradeAnalysis(bullets) {
+  dom.tradeAnalysis.innerHTML = bullets.length
+    ? `<ul>${bullets.map((bullet) => `<li>${escapeHtml(bullet)}</li>`).join("")}</ul>`
+    : `<div class="empty-state">No weekly trade analysis available</div>`;
+}
+
+function renderTradeSummaryGrid(target, rows) {
+  target.innerHTML = rows.map((row) => `
+    <article class="trade-summary-card">
+      <span>${escapeHtml(row.label)}</span>
+      <strong>${formatCurrency(row.netSales)}</strong>
+      <em>${formatNumber(row.netUnits)} units</em>
+      <small class="${getDeltaClass({ hasComparison: row.change !== null, change: row.change }, "change")}">${row.change === null ? "" : `${formatCurrency(row.change)} ${row.changePct === null ? "n/a" : formatSignedPercent(row.changePct)}`}</small>
+    </article>
+  `).join("");
+}
+
+function renderTradeBrandTable(rows) {
+  if (!rows.length) {
+    dom.tradeBrandTbody.innerHTML = `<tr><td colspan="6">No brand results for the fiscal week and filters</td></tr>`;
+    return;
+  }
+
+  dom.tradeBrandTbody.innerHTML = rows.map((row) => `
+    <tr>
+      <td><div class="clip" title="${escapeHtml(row.brand)}">${escapeHtml(row.brand)}</div></td>
+      <td class="numeric">${formatCurrency(row.netSales)}</td>
+      <td class="numeric">${formatNumber(row.netUnits)}</td>
+      <td class="numeric ${getDeltaClass({ hasComparison: row.change !== null, change: row.change }, "change")}">${row.change === null ? "" : formatCurrency(row.change)}</td>
+      <td class="numeric ${getDeltaClass({ hasComparison: row.change !== null, change: row.change }, "changePct")}">${row.changePct === null ? "n/a" : formatSignedPercent(row.changePct)}</td>
+      <td><div class="clip" title="${escapeHtml(row.keySkuText)}">${escapeHtml(row.keySkuText)}</div></td>
+    </tr>
+  `).join("");
+}
+
+function buildTradeRegionalTopProducts(records, comparisonRecords = [], hasComparison = false) {
+  const rows = [];
+  for (const region of getTradeRegions()) {
+    const regionalRecords = records.filter((record) => record.region === region.label);
+    const regionalComparisonRecords = hasComparison
+      ? comparisonRecords.filter((record) => record.region === region.label)
+      : [];
+    const comparisonProducts = hasComparison
+      ? buildProductResults(regionalComparisonRecords)
+        .sort((a, b) => sortRegionalProducts(a, b, "netSales"))
+        .slice(0, 20)
+      : [];
+    const comparisonRanks = new Map(comparisonProducts.map((product, index) => [product.productKey, index + 1]));
+    const productRecords = groupRecordsByProduct(regionalRecords);
+    const products = buildProductResults(regionalRecords)
+      .sort((a, b) => sortRegionalProducts(a, b, "netSales"))
+      .slice(0, 20);
+
+    products.forEach((product, index) => {
+      const rank = index + 1;
+      const comparisonRank = comparisonRanks.get(product.productKey) || null;
+      rows.push({
+        region: region.label,
+        rank,
+        rankChange: getRankChangeLabel(rank, comparisonRank, hasComparison),
+        tradeGroup: getDominantTradeCategory(productRecords.get(product.productKey) || []),
+        ...product
+      });
+    });
+  }
+  return rows;
+}
+
+function getTradeRegions() {
+  const selected = state.filters.region;
+  if (selected?.size) {
+    return REGION_DEFS.filter((region) => selected.has(region.label));
+  }
+  return REGION_DEFS;
+}
+
+function groupRecordsByProduct(records) {
+  const map = new Map();
+  for (const record of records) {
+    const key = getProductKey(record);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(record);
+  }
+  return map;
+}
+
+function getDominantTradeCategory(records) {
+  const map = aggregateTradeBreakdown(records, getTradeProductGroup);
+  return Array.from(map.entries())
+    .sort((a, b) => b[1].netSales - a[1].netSales || collator.compare(a[0], b[0]))[0]?.[0] || "";
+}
+
+function renderTradeRegionalSections(rows) {
+  if (!rows.length) {
+    dom.tradeRegionalSections.innerHTML = `<div class="empty-state">No regional top sellers for the fiscal week and filters</div>`;
+    return;
+  }
+
+  const rowsByRegion = new Map();
+  for (const row of rows) {
+    if (!rowsByRegion.has(row.region)) rowsByRegion.set(row.region, []);
+    rowsByRegion.get(row.region).push(row);
+  }
+
+  dom.tradeRegionalSections.innerHTML = Array.from(rowsByRegion.entries()).map(([region, regionRows]) => `
+    <section class="trade-region-section">
+      <div class="trade-region-head">
+        <div>
+          <span class="panel-kicker">${escapeHtml(region)}</span>
+          <h3>${escapeHtml(region)} Top 20</h3>
+        </div>
+        <ul>
+          ${buildTradeRegionalBullets(regionRows).map((bullet) => `<li>${escapeHtml(bullet)}</li>`).join("")}
+        </ul>
+      </div>
+      <div class="table-scroll">
+        <table class="trade-regional-table">
+          <thead>
+            <tr>
+              <th>Rank</th>
+              <th>Product Title</th>
+              <th>Net Sales</th>
+              <th>Units Sold</th>
+              <th>Status</th>
+              <th>Pos Change</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${regionRows.map((row) => `
+              <tr>
+                <td class="numeric">${formatNumber(row.rank)}</td>
+                <td><div class="clip" title="${escapeHtml(row.productTitle)}">${escapeHtml(row.productTitle)}</div></td>
+                <td class="numeric">${formatCurrency(row.netSales)}</td>
+                <td class="numeric">${formatNumber(row.netUnits)}</td>
+                <td>${escapeHtml(row.status)}</td>
+                <td class="numeric rank-change ${getRankChangeClass(row.rankChange)}">${escapeHtml(row.rankChange)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `).join("");
+}
+
+function buildTradeRegionalBullets(rows) {
+  const top = rows[0];
+  const risers = rows.filter((row) => String(row.rankChange).startsWith("+"))
+    .sort((a, b) => Number(b.rankChange) - Number(a.rankChange))
+    .slice(0, 2);
+  const fallers = rows.filter((row) => String(row.rankChange).startsWith("-"))
+    .sort((a, b) => Number(a.rankChange) - Number(b.rankChange))
+    .slice(0, 2);
+  const newItems = rows.filter((row) => row.rankChange === "NEW").slice(0, 2);
+  const groupRows = Array.from(aggregateTradeBreakdownFromRows(rows, (row) => row.tradeGroup).entries())
+    .sort((a, b) => b[1].netSales - a[1].netSales || collator.compare(a[0], b[0]));
+  const statusRows = Array.from(aggregateTradeBreakdownFromRows(rows, (row) => row.status).entries())
+    .sort((a, b) => b[1].netSales - a[1].netSales || collator.compare(a[0], b[0]));
+  const bullets = [];
+
+  if (top) bullets.push(`Top seller: ${top.productTitle} at ${formatCurrency(top.netSales)} and ${formatNumber(top.netUnits)} units.`);
+  if (groupRows[0]) bullets.push(`${groupRows[0][0]} led product groups across top sellers at ${formatCurrency(groupRows[0][1].netSales)}.`);
+  if (statusRows[0]) bullets.push(`${statusRows[0][0]} led price status mix at ${formatCurrency(statusRows[0][1].netSales)}.`);
+
+  const movers = [
+    ...risers.map((row) => `${row.productTitle} (${row.rankChange})`),
+    ...fallers.map((row) => `${row.productTitle} (${row.rankChange})`),
+    ...newItems.map((row) => `${row.productTitle} (NEW)`)
+  ].slice(0, 4);
+  if (movers.length) bullets.push(`Key movers: ${movers.join("; ")}.`);
+  return bullets;
+}
+
+function aggregateTradeBreakdownFromRows(rows, getter) {
+  const map = new Map();
+  for (const row of rows) {
+    const label = getter(row) || BLANK;
+    if (!label || label === BLANK) continue;
+    if (!map.has(label)) map.set(label, emptyMetricAggregate());
+    const aggregate = map.get(label);
+    aggregate.netSales += row.netSales;
+    aggregate.netUnits += row.netUnits;
+  }
+  return map;
+}
+
 function summarize(records) {
   const orders = new Set();
   let netSales = 0;
@@ -2799,6 +3259,46 @@ function exportRegionalTopProductsCsv() {
   const start = dom.currentStart.value || "all";
   const end = dom.currentEnd.value || todayKey();
   downloadFile(`regional-top-20-${start}-to-${end}.csv`, lines.map(csvLine).join("\n"), "text/csv");
+}
+
+function exportTradeBrandCsv() {
+  const periods = state.tradePeriods || getTradePeriods();
+  const headers = ["Fiscal Week", "Compare Week", "Brand", "Net Sales", "Net Units", "Sales Change", "Change %", "Key SKUs"];
+  const rows = (state.tradeBrandRows || []).slice(0, 10);
+  const lines = [
+    headers,
+    ...rows.map((row) => [
+      formatTradeDateRange(periods.current),
+      formatTradeDateRange(periods.comparison),
+      row.brand,
+      row.netSales,
+      row.netUnits,
+      row.change === null ? "" : row.change,
+      row.changePct === null ? "n/a" : row.changePct,
+      row.keySkuText
+    ])
+  ];
+  downloadFile(`trade-brand-performance-${periods.current.start}-to-${periods.current.end}.csv`, lines.map(csvLine).join("\n"), "text/csv");
+}
+
+function exportTradeRegionalCsv() {
+  const periods = state.tradePeriods || getTradePeriods();
+  const headers = ["Fiscal Week", "Region", "Rank", "Product Title", "Net Sales", "Units Sold", "Status", "Pos Change"];
+  const rows = state.tradeRegionalRows || [];
+  const lines = [
+    headers,
+    ...rows.map((row) => [
+      formatTradeDateRange(periods.current),
+      row.region,
+      row.rank,
+      row.productTitle,
+      row.netSales,
+      row.netUnits,
+      row.status,
+      row.rankChange
+    ])
+  ];
+  downloadFile(`trade-regional-top-sellers-${periods.current.start}-to-${periods.current.end}.csv`, lines.map(csvLine).join("\n"), "text/csv");
 }
 
 function getPivotExportValue(row, key) {
@@ -3376,6 +3876,24 @@ function formatNumber(value) {
 
 function formatPercent(value) {
   return percentFormat.format(value || 0);
+}
+
+function formatSignedPercent(value) {
+  if (value === null || value === undefined) return "n/a";
+  return `${value >= 0 ? "+" : ""}${formatPercent(value)}`;
+}
+
+function formatTradeDateRange(range) {
+  if (!range) return "";
+  return `${formatTrendDateKey(range.start)} to ${formatTrendDateKey(range.end)}`;
+}
+
+function formatTradeMovement(current, comparison) {
+  const change = (Number(current) || 0) - (Number(comparison) || 0);
+  const changePct = percentChange(current, comparison);
+  if (change === 0) return `flat at ${formatCurrency(current)}`;
+  const direction = change > 0 ? "up" : "down";
+  return `${direction} ${formatCurrency(Math.abs(change))}${changePct === null ? "" : ` (${formatSignedPercent(changePct)})`}`;
 }
 
 function compactDateRange(minDate, maxDate) {
