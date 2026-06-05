@@ -1199,18 +1199,19 @@ function renderFilterOptionMarkup(dimension) {
   const selected = state.filters[dimension.key];
   const search = state.filterSearch[dimension.key] || "";
   const counts = getFilterCounts(dimension.key);
-  const options = Array.from(counts.keys())
-    .filter((value) => value.toLocaleLowerCase().includes(search.toLocaleLowerCase()))
-    .sort(collator.compare)
+  const options = Array.from(counts.entries())
+    .filter(([value]) => value.toLocaleLowerCase().includes(search.toLocaleLowerCase()))
+    .sort(compareFilterOptions)
     .slice(0, MAX_FILTER_OPTIONS);
 
-  const optionMarkup = options.map((value) => {
+  const optionMarkup = options.map(([value, count]) => {
     const id = `${dimension.key}-${hashString(value)}`;
+    const hasRelevantData = count > 0;
     return `
-      <label class="filter-option" for="${id}" title="${escapeHtml(value)}">
+      <label class="filter-option ${hasRelevantData ? "" : "is-empty"}" for="${id}" title="${escapeHtml(value)}">
         <input id="${id}" type="checkbox" data-filter-option="${dimension.key}" value="${escapeHtml(value)}" ${selected.has(value) ? "checked" : ""}>
         <span>${escapeHtml(value)}</span>
-        <em>${numberFormat.format(counts.get(value) || 0)}</em>
+        <em>${numberFormat.format(count)}</em>
       </label>
     `;
   }).join("");
@@ -1223,9 +1224,28 @@ function getFilterCounts(key) {
   for (const record of state.records) {
     const value = record[key] || BLANK;
     if (isHiddenFilterValue(value)) continue;
-    counts.set(value, (counts.get(value) || 0) + 1);
+    if (!counts.has(value)) counts.set(value, 0);
+    if (recordMatchesOtherFilters(record, key)) {
+      counts.set(value, counts.get(value) + 1);
+    }
   }
   return counts;
+}
+
+function recordMatchesOtherFilters(record, excludeKey) {
+  return DIMENSIONS.every((dimension) => {
+    if (dimension.key === excludeKey) return true;
+    const selected = state.filters[dimension.key];
+    if (!selected || selected.size === 0) return true;
+    return selected.has(record[dimension.key] || BLANK);
+  });
+}
+
+function compareFilterOptions([aValue, aCount], [bValue, bCount]) {
+  const aRelevant = aCount > 0;
+  const bRelevant = bCount > 0;
+  if (aRelevant !== bRelevant) return aRelevant ? -1 : 1;
+  return collator.compare(aValue, bValue);
 }
 
 function renderFilterOptions(key) {

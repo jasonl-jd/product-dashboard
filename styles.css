@@ -366,6 +366,19 @@ select:focus {
   font-weight: 520;
 }
 
+.filter-option.is-empty {
+  color: var(--muted);
+  opacity: 0.48;
+}
+
+.filter-option.is-empty input {
+  filter: grayscale(1);
+}
+
+.filter-option.is-empty em {
+  color: var(--line-strong);
+}
+
 .filter-option input {
   width: 16px;
   height: 16px;
