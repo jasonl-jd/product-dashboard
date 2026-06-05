@@ -1485,6 +1485,7 @@ function renderTrendLineChart(rows) {
   const latest = rows[rows.length - 1];
   const latestChange = latest.salesChange === null ? "" : `${latest.salesChange >= 0 ? "+" : ""}${formatCurrency(latest.salesChange)}`;
   const primaryTickFormatter = showSales ? formatCompactCurrency : formatNumber;
+  const xLabelIndexes = getTrendXLabelIndexes(rows, state.trendGrain, plotWidth);
 
   return `
     <div class="trend-summary">
@@ -1527,7 +1528,8 @@ function renderTrendLineChart(rows) {
       ${showUnits && !showSales ? `<path d="${unitsAreaPath}" class="trend-area units-area"></path>` : ""}
       ${showSales ? `<path d="${salesLinePath}" class="trend-line sales-line"></path>` : ""}
       ${showUnits ? `<path d="${unitsLinePath}" class="trend-line units-line"></path>` : ""}
-      ${rows.map((row, index) => {
+      ${xLabelIndexes.map((index) => {
+        const row = rows[index];
         const point = showSales ? salesPoints[index] : unitsPoints[index];
         const y = height - 32;
         return `<text x="${point.x.toFixed(2)}" y="${y}" class="trend-axis-label trend-x-label" text-anchor="end" transform="rotate(-35 ${point.x.toFixed(2)} ${y})">${escapeHtml(row.axisLabel || row.periodLabel)}</text>`;
@@ -1809,7 +1811,7 @@ function renderProductCompareLineChart(series) {
   const primaryTicks = buildTrendYAxisTicks(primaryScale.min, primaryScale.max, 4);
   const secondaryTicks = showBoth ? buildTrendYAxisTicks(unitsScale.min, unitsScale.max, 4) : [];
   const baselineY = showSales ? yForValue(0, salesScale) : yForValue(0, unitsScale);
-  const xLabelIndexes = getProductCompareXLabelIndexes(periods, state.compareGrain);
+  const xLabelIndexes = getTrendXLabelIndexes(periods, state.compareGrain, plotWidth);
   const primaryTickFormatter = showSales ? formatCompactCurrency : formatNumber;
 
   return `
@@ -1920,13 +1922,19 @@ function getProductCompareTooltipPosition(anchorX, anchorY, options) {
   return { x, y, width, height };
 }
 
-function getProductCompareXLabelIndexes(periods, grain) {
-  if (periods.length <= 1) return periods.length ? [0] : [];
-  const maxLabels = grain === "day" ? 12 : grain === "month" ? 16 : 18;
-  if (periods.length <= maxLabels) return periods.map((_, index) => index);
+function getTrendXLabelIndexes(items, grain, plotWidth) {
+  const length = Array.isArray(items) ? items.length : Number(items) || 0;
+  if (length <= 1) return length ? [0] : [];
+
+  const labelSpacing = grain === "day" ? 56 : grain === "month" ? 62 : 74;
+  const grainMax = grain === "day" ? 12 : grain === "month" ? 12 : 10;
+  const widthMax = Math.max(2, Math.floor((Number(plotWidth) || 0) / labelSpacing));
+  const maxLabels = Math.max(2, Math.min(grainMax, widthMax || grainMax));
+
+  if (length <= maxLabels) return Array.from({ length }, (_, index) => index);
   const indexes = new Set();
   for (let index = 0; index < maxLabels; index += 1) {
-    indexes.add(Math.round(index * (periods.length - 1) / (maxLabels - 1)));
+    indexes.add(Math.round(index * (length - 1) / (maxLabels - 1)));
   }
   return Array.from(indexes).sort((a, b) => a - b);
 }
