@@ -16,6 +16,8 @@ const TREND_SKU_SUGGESTION_MIN = 5;
 const TREND_TEXT_SUGGESTION_MIN = 4;
 const TREND_METRIC_OPTIONS = new Set(["sales", "units", "both"]);
 const TREND_MONTH_ABBRS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const PRODUCT_COMPARE_LIMIT = 4;
+const PRODUCT_COMPARE_COLORS = ["#ffdd00", "#4fb6ff", "#d71920", "#f7f7f2"];
 const PRICE_STATUS_LABELS = ["Full Price", "Markdown"];
 const STATUS_DISPLAY_ORDER = ["Full Price", "Markdown", "Return"];
 
@@ -117,6 +119,10 @@ const state = {
   trendProductQuery: "",
   trendGrain: "week",
   trendMetric: "sales",
+  compareProductQuery: "",
+  compareProducts: [],
+  compareGrain: "week",
+  compareMetric: "sales",
   columnOrders: {
     pivot: [],
     product: []
@@ -181,6 +187,15 @@ function collectDom() {
     trendProductOptions: document.querySelector("#trend-product-options"),
     clearTrendProduct: document.querySelector("#clear-trend-product"),
     trendChart: document.querySelector("#trend-chart"),
+    compareGrain: document.querySelector("#compare-grain"),
+    compareMetric: document.querySelector("#compare-metric"),
+    compareProductInput: document.querySelector("#compare-product-input"),
+    compareProductOptions: document.querySelector("#compare-product-options"),
+    addCompareProduct: document.querySelector("#add-compare-product"),
+    clearCompareProducts: document.querySelector("#clear-compare-products"),
+    compareSelection: document.querySelector("#compare-selection"),
+    compareChart: document.querySelector("#compare-chart"),
+    compareSummaryTbody: document.querySelector("#compare-summary-tbody"),
     fileTbody: document.querySelector("#file-tbody"),
     pivotHeading: document.querySelector("#pivot-heading"),
     pivotThead: document.querySelector("#pivot-thead"),
@@ -212,6 +227,13 @@ function bindEvents() {
   dom.trendMetric.addEventListener("change", handleTrendMetricChange);
   dom.trendProductInput.addEventListener("input", handleTrendProductInput);
   dom.clearTrendProduct.addEventListener("click", clearTrendProduct);
+  dom.compareGrain.addEventListener("change", handleCompareGrainChange);
+  dom.compareMetric.addEventListener("change", handleCompareMetricChange);
+  dom.compareProductInput.addEventListener("input", handleCompareProductInput);
+  dom.compareProductInput.addEventListener("keydown", handleCompareProductKeydown);
+  dom.addCompareProduct.addEventListener("click", addCompareProductFromInput);
+  dom.clearCompareProducts.addEventListener("click", clearCompareProducts);
+  dom.compareSelection.addEventListener("click", handleCompareSelectionClick);
 
   [dom.currentStart, dom.currentEnd, dom.compareStart, dom.compareEnd].forEach((input) => {
     input.addEventListener("change", () => {
@@ -1130,6 +1152,7 @@ function renderAll() {
 
   renderKpis(currentSummary, compareSummary, hasComparison);
   renderTrendTable(current);
+  renderProductCompare(current);
   state.pivotRows = buildPivot(current, comparison, hasComparison);
   state.productRows = buildProductResults(current, comparison, hasComparison);
   state.regionalProductRows = buildRegionalTopProducts(current, comparison, hasComparison);
@@ -1332,6 +1355,72 @@ function clearTrendProduct() {
   renderTrendTable(getCurrentTrendRecords());
 }
 
+function handleCompareProductInput() {
+  state.compareProductQuery = dom.compareProductInput.value;
+  renderCompareProductOptions(getCurrentTrendRecords());
+}
+
+function handleCompareProductKeydown(event) {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  addCompareProductFromInput();
+}
+
+function handleCompareGrainChange() {
+  state.compareGrain = dom.compareGrain.value || "week";
+  renderProductCompare(getCurrentTrendRecords());
+}
+
+function handleCompareMetricChange() {
+  state.compareMetric = getCompareMetricMode();
+  renderProductCompare(getCurrentTrendRecords());
+}
+
+function addCompareProductFromInput() {
+  const records = getCurrentTrendRecords();
+  const product = resolveCompareProductSelection(state.compareProductQuery, records);
+  if (!product) {
+    setStatus("Product not found in the current filtered period.", "error");
+    return;
+  }
+
+  if (state.compareProducts.some((item) => item.productKey === product.productKey)) {
+    setStatus("That product is already in the comparison.", "error");
+    return;
+  }
+
+  if (state.compareProducts.length >= PRODUCT_COMPARE_LIMIT) {
+    setStatus(`Product compare is capped at ${PRODUCT_COMPARE_LIMIT} products.`, "error");
+    return;
+  }
+
+  state.compareProducts.push({
+    productKey: product.productKey,
+    sku: product.sku,
+    productTitle: product.productTitle,
+    optionLabel: product.optionLabel
+  });
+  state.compareProductQuery = "";
+  dom.compareProductInput.value = "";
+  dom.compareProductOptions.innerHTML = "";
+  renderProductCompare(records);
+}
+
+function clearCompareProducts() {
+  state.compareProducts = [];
+  state.compareProductQuery = "";
+  dom.compareProductInput.value = "";
+  dom.compareProductOptions.innerHTML = "";
+  renderProductCompare(getCurrentTrendRecords());
+}
+
+function handleCompareSelectionClick(event) {
+  const removeButton = event.target.closest("[data-compare-remove]");
+  if (!removeButton) return;
+  state.compareProducts = state.compareProducts.filter((product) => product.productKey !== removeButton.dataset.compareRemove);
+  renderProductCompare(getCurrentTrendRecords());
+}
+
 function getCurrentTrendRecords() {
   return applyDimensionFilters(state.records)
     .filter((record) => inDateRange(record, dom.currentStart.value, dom.currentEnd.value));
@@ -1527,6 +1616,319 @@ function buildTrendYAxisTicks(minValue, maxValue, count) {
     ticks.push(minValue + ((maxValue - minValue) * index / count));
   }
   return ticks;
+}
+
+function renderProductCompare(records) {
+  if (!dom.compareChart) return;
+
+  state.compareGrain = dom.compareGrain.value || state.compareGrain || "week";
+  state.compareMetric = getCompareMetricMode();
+  renderCompareProductOptions(records);
+  renderCompareSelection(records);
+
+  const selectedProducts = getCompareSelectedProducts(records);
+  const series = buildProductCompareSeries(records, selectedProducts);
+  renderProductCompareSummary(series);
+
+  if (!selectedProducts.length) {
+    dom.compareChart.innerHTML = `<div class="empty-state">No products selected</div>`;
+    return;
+  }
+
+  if (!series.some((item) => item.rows.length)) {
+    dom.compareChart.innerHTML = `<div class="empty-state">No comparison results for the selected period and filters</div>`;
+    return;
+  }
+
+  dom.compareChart.innerHTML = renderProductCompareLineChart(series);
+}
+
+function getCompareMetricMode() {
+  const value = dom.compareMetric?.value || state.compareMetric || "sales";
+  return TREND_METRIC_OPTIONS.has(value) ? value : "sales";
+}
+
+function renderCompareProductOptions(records) {
+  if (!dom.compareProductOptions) return;
+  const query = cleanText(dom.compareProductInput.value);
+  if (!shouldShowTrendSuggestions(query) || state.compareProducts.length >= PRODUCT_COMPARE_LIMIT) {
+    dom.compareProductOptions.innerHTML = "";
+    return;
+  }
+
+  const selectedKeys = new Set(state.compareProducts.map((product) => product.productKey));
+  const products = getCompareProductMatches(records, query)
+    .filter((product) => !selectedKeys.has(product.productKey))
+    .slice(0, TREND_SUGGESTION_LIMIT);
+
+  dom.compareProductOptions.innerHTML = products.map((product) => `
+    <option value="${escapeHtml(product.optionLabel)}"></option>
+  `).join("");
+}
+
+function resolveCompareProductSelection(query, records) {
+  const text = cleanText(query);
+  if (!text) return null;
+  const products = aggregateTrendProducts(records);
+  const exact = resolveTrendProduct(text, products);
+  if (exact) return exact;
+  if (!shouldShowTrendSuggestions(text)) return null;
+  return getCompareProductMatches(records, text)[0] || null;
+}
+
+function getCompareProductMatches(records, query) {
+  return aggregateTrendProducts(records)
+    .filter((product) => productMatchesTrendQuery(product, query))
+    .sort((a, b) => b.netSales - a.netSales || collator.compare(a.optionLabel, b.optionLabel));
+}
+
+function renderCompareSelection(records) {
+  if (!dom.compareSelection) return;
+  const products = getCompareSelectedProducts(records);
+  if (!products.length) {
+    dom.compareSelection.innerHTML = `<span class="compare-selection-empty">No products selected</span>`;
+    return;
+  }
+
+  dom.compareSelection.innerHTML = products.map((product, index) => `
+    <span class="compare-chip" style="--compare-color:${PRODUCT_COMPARE_COLORS[index % PRODUCT_COMPARE_COLORS.length]}">
+      <span class="compare-chip-label" title="${escapeHtml(product.optionLabel)}">${escapeHtml(product.sku)} | ${escapeHtml(product.productTitle)}</span>
+      <button type="button" data-compare-remove="${escapeHtml(product.productKey)}" aria-label="Remove ${escapeHtml(product.productTitle)}">x</button>
+    </span>
+  `).join("");
+}
+
+function getCompareSelectedProducts(records) {
+  const currentProducts = new Map(aggregateTrendProducts(records).map((product) => [product.productKey, product]));
+  return state.compareProducts.map((product) => ({
+    ...product,
+    ...(currentProducts.get(product.productKey) || {}),
+    optionLabel: currentProducts.get(product.productKey)?.optionLabel || product.optionLabel || `${product.sku} | ${product.productTitle}`
+  }));
+}
+
+function buildProductCompareSeries(records, products) {
+  const productRecords = new Map(products.map((product) => [product.productKey, []]));
+  for (const record of records) {
+    const productKey = getProductKey(record);
+    if (productRecords.has(productKey)) productRecords.get(productKey).push(record);
+  }
+
+  const grain = state.compareGrain || "week";
+  const series = products.map((product, index) => {
+    const rows = buildTrendRows(productRecords.get(product.productKey) || [], grain, dom.currentStart.value, dom.currentEnd.value);
+    const totalSales = sum(productRecords.get(product.productKey) || [], "netSales");
+    const totalUnits = sum(productRecords.get(product.productKey) || [], "netUnits");
+    return {
+      ...product,
+      color: PRODUCT_COMPARE_COLORS[index % PRODUCT_COMPARE_COLORS.length],
+      rows,
+      totalSales,
+      totalUnits
+    };
+  });
+
+  return normalizeProductCompareSeries(series);
+}
+
+function normalizeProductCompareSeries(series) {
+  const periods = new Map();
+  for (const item of series) {
+    for (const row of item.rows) {
+      if (!periods.has(row.periodStart)) {
+        periods.set(row.periodStart, {
+          periodStart: row.periodStart,
+          periodEnd: row.periodEnd,
+          periodLabel: row.periodLabel,
+          axisLabel: row.axisLabel
+        });
+      }
+    }
+  }
+
+  const orderedPeriods = Array.from(periods.values()).sort((a, b) => collator.compare(a.periodStart, b.periodStart));
+  return series.map((item) => {
+    const rowMap = new Map(item.rows.map((row) => [row.periodStart, row]));
+    return {
+      ...item,
+      rows: orderedPeriods.map((period) => rowMap.get(period.periodStart) || {
+        ...period,
+        netSales: 0,
+        netUnits: 0,
+        orders: 0,
+        salesChange: null,
+        unitsChange: null
+      })
+    };
+  });
+}
+
+function renderProductCompareSummary(series) {
+  if (!dom.compareSummaryTbody) return;
+  if (!series.length) {
+    dom.compareSummaryTbody.innerHTML = `<tr><td colspan="4">No products selected</td></tr>`;
+    return;
+  }
+
+  dom.compareSummaryTbody.innerHTML = series.map((product) => `
+    <tr>
+      <td>
+        <div class="compare-summary-product">
+          <span class="compare-summary-swatch" style="--compare-color:${product.color}"></span>
+          <div class="clip" title="${escapeHtml(product.productTitle)}">${escapeHtml(product.productTitle)}</div>
+        </div>
+      </td>
+      <td><div class="clip" title="${escapeHtml(product.sku)}">${escapeHtml(product.sku)}</div></td>
+      <td class="numeric">${formatCurrency(product.totalSales)}</td>
+      <td class="numeric">${formatNumber(product.totalUnits)}</td>
+    </tr>
+  `).join("");
+}
+
+function renderProductCompareLineChart(series) {
+  const metricMode = getCompareMetricMode();
+  const showSales = metricMode !== "units";
+  const showUnits = metricMode !== "sales";
+  const showBoth = showSales && showUnits;
+  const periods = series.find((item) => item.rows.length)?.rows || [];
+  const width = 930;
+  const height = 420;
+  const pad = { top: 34, right: showBoth ? 100 : 48, bottom: 92, left: 92 };
+  const plotWidth = width - pad.left - pad.right;
+  const plotHeight = height - pad.top - pad.bottom;
+  const salesValues = series.flatMap((item) => item.rows.map((row) => row.netSales));
+  const unitsValues = series.flatMap((item) => item.rows.map((row) => row.netUnits));
+  const salesScale = getTrendScale(salesValues);
+  const unitsScale = getTrendScale(unitsValues);
+  const primaryScale = showSales ? salesScale : unitsScale;
+  const xForIndex = (index) => {
+    if (periods.length <= 1) return pad.left + plotWidth / 2;
+    return pad.left + (index / (periods.length - 1)) * plotWidth;
+  };
+  const yForValue = (value, scale) => pad.top + (1 - (value - scale.min) / (scale.max - scale.min)) * plotHeight;
+  const primaryTicks = buildTrendYAxisTicks(primaryScale.min, primaryScale.max, 4);
+  const secondaryTicks = showBoth ? buildTrendYAxisTicks(unitsScale.min, unitsScale.max, 4) : [];
+  const baselineY = showSales ? yForValue(0, salesScale) : yForValue(0, unitsScale);
+  const xLabelIndexes = getProductCompareXLabelIndexes(periods, state.compareGrain);
+  const primaryTickFormatter = showSales ? formatCompactCurrency : formatNumber;
+
+  return `
+    <div class="compare-legend" aria-hidden="true">
+      ${series.map((item) => `
+        <span title="${escapeHtml(item.optionLabel)}">
+          <i style="--compare-color:${item.color}"></i>
+          ${escapeHtml(item.sku)}
+        </span>
+      `).join("")}
+    </div>
+    <svg class="trend-line-svg compare-line-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Product comparison trend">
+      <rect x="0" y="0" width="${width}" height="${height}" class="trend-svg-bg"></rect>
+      ${primaryTicks.map((tick) => {
+        const y = yForValue(tick, primaryScale);
+        return `
+          <line x1="${pad.left}" y1="${y.toFixed(2)}" x2="${width - pad.right}" y2="${y.toFixed(2)}" class="trend-grid-line"></line>
+          <text x="${pad.left - 12}" y="${(y + 4).toFixed(2)}" class="trend-axis-label ${showSales ? "sales-axis" : "units-axis"}" text-anchor="end">${escapeHtml(primaryTickFormatter(tick))}</text>
+        `;
+      }).join("")}
+      ${secondaryTicks.map((tick) => {
+        const y = yForValue(tick, unitsScale);
+        return `<text x="${width - pad.right + 14}" y="${(y + 4).toFixed(2)}" class="trend-axis-label units-axis" text-anchor="start">${escapeHtml(formatNumber(tick))}</text>`;
+      }).join("")}
+      <line x1="${pad.left}" y1="${baselineY.toFixed(2)}" x2="${width - pad.right}" y2="${baselineY.toFixed(2)}" class="trend-zero-line"></line>
+      ${series.map((item) => renderProductCompareSeriesLines(item, { showSales, showUnits, xForIndex, yForValue, salesScale, unitsScale })).join("")}
+      ${xLabelIndexes.map((index) => {
+        const period = periods[index];
+        const x = xForIndex(index);
+        const y = height - 34;
+        return `<text x="${x.toFixed(2)}" y="${y}" class="trend-axis-label trend-x-label" text-anchor="end" transform="rotate(-35 ${x.toFixed(2)} ${y})">${escapeHtml(period.axisLabel || period.periodLabel)}</text>`;
+      }).join("")}
+      ${series.map((item) => renderProductCompareSeriesPoints(item, { showSales, showUnits, xForIndex, yForValue, salesScale, unitsScale, width, height, pad })).join("")}
+    </svg>
+  `;
+}
+
+function renderProductCompareSeriesLines(item, options) {
+  const salesPoints = item.rows.map((row, index) => ({
+    x: options.xForIndex(index),
+    y: options.yForValue(row.netSales, options.salesScale)
+  }));
+  const unitsPoints = item.rows.map((row, index) => ({
+    x: options.xForIndex(index),
+    y: options.yForValue(row.netUnits, options.unitsScale)
+  }));
+
+  return `
+    ${options.showSales ? `<path d="${buildTrendPath(salesPoints)}" class="compare-product-line compare-sales-line" style="--compare-color:${item.color}"></path>` : ""}
+    ${options.showUnits ? `<path d="${buildTrendPath(unitsPoints)}" class="compare-product-line compare-units-line" style="--compare-color:${item.color}"></path>` : ""}
+  `;
+}
+
+function renderProductCompareSeriesPoints(item, options) {
+  return item.rows.map((row, index) => {
+    const salesPoint = {
+      x: options.xForIndex(index),
+      y: options.yForValue(row.netSales, options.salesScale)
+    };
+    const unitsPoint = {
+      x: options.xForIndex(index),
+      y: options.yForValue(row.netUnits, options.unitsScale)
+    };
+    return renderProductComparePointGroup(item, row, salesPoint, unitsPoint, options);
+  }).join("");
+}
+
+function renderProductComparePointGroup(product, row, salesPoint, unitsPoint, options) {
+  const visiblePoints = [
+    options.showSales ? salesPoint : null,
+    options.showUnits ? unitsPoint : null
+  ].filter(Boolean);
+  const anchorPoint = visiblePoints.reduce((top, point) => point.y < top.y ? point : top, visiblePoints[0]);
+  const tooltip = getProductCompareTooltipPosition(anchorPoint.x, anchorPoint.y, options);
+  const periodType = state.compareGrain === "week" ? "Week" : state.compareGrain === "month" ? "Month" : "Day";
+  const productLabel = truncateText(product.productTitle, 28);
+  const ariaLabel = `${product.productTitle}, ${periodType} ${row.periodLabel}, sales ${formatCurrency(row.netSales)}, units ${formatNumber(row.netUnits)}`;
+
+  return `
+    <g class="trend-point-group compare-point-group" tabindex="0" aria-label="${escapeHtml(ariaLabel)}">
+      ${options.showSales ? `<circle cx="${salesPoint.x.toFixed(2)}" cy="${salesPoint.y.toFixed(2)}" r="4.7" class="trend-point-dot compare-point-dot" style="--compare-color:${product.color}"></circle>` : ""}
+      ${options.showUnits ? `<circle cx="${unitsPoint.x.toFixed(2)}" cy="${unitsPoint.y.toFixed(2)}" r="4.7" class="trend-point-dot compare-point-dot compare-point-units" style="--compare-color:${product.color}"></circle>` : ""}
+      <g class="trend-tooltip compare-tooltip" transform="translate(${tooltip.x.toFixed(2)} ${tooltip.y.toFixed(2)})">
+        <rect x="0" y="0" width="${tooltip.width}" height="${tooltip.height}" rx="8" class="trend-tooltip-card"></rect>
+        <rect x="0" y="0" width="5" height="${tooltip.height}" rx="2.5" class="trend-tooltip-accent" style="--compare-color:${product.color}"></rect>
+        <text x="14" y="20" class="trend-tooltip-label">Product</text>
+        <text x="82" y="20" class="trend-tooltip-value">${escapeHtml(product.sku)}</text>
+        <text x="14" y="39" class="trend-tooltip-value">${escapeHtml(productLabel)}</text>
+        <text x="14" y="59" class="trend-tooltip-label">${escapeHtml(periodType)}</text>
+        <text x="82" y="59" class="trend-tooltip-value">${escapeHtml(row.periodLabel)}</text>
+        <text x="14" y="79" class="trend-tooltip-label">Sales</text>
+        <text x="82" y="79" class="trend-tooltip-value">${escapeHtml(formatCurrency(row.netSales))}</text>
+        <text x="14" y="97" class="trend-tooltip-label">Units</text>
+        <text x="82" y="97" class="trend-tooltip-value">${escapeHtml(formatNumber(row.netUnits))}</text>
+      </g>
+    </g>
+  `;
+}
+
+function getProductCompareTooltipPosition(anchorX, anchorY, options) {
+  const width = 260;
+  const height = 110;
+  const minX = options.pad.left + 4;
+  const maxX = options.width - options.pad.right - width - 4;
+  const x = Math.min(Math.max(anchorX - width / 2, minX), maxX);
+  const canShowAbove = anchorY - height - 14 >= options.pad.top;
+  const y = canShowAbove ? anchorY - height - 14 : anchorY + 16;
+  return { x, y, width, height };
+}
+
+function getProductCompareXLabelIndexes(periods, grain) {
+  if (periods.length <= 1) return periods.length ? [0] : [];
+  const maxLabels = grain === "day" ? 12 : grain === "month" ? 16 : 18;
+  if (periods.length <= maxLabels) return periods.map((_, index) => index);
+  const indexes = new Set();
+  for (let index = 0; index < maxLabels; index += 1) {
+    indexes.add(Math.round(index * (periods.length - 1) / (maxLabels - 1)));
+  }
+  return Array.from(indexes).sort((a, b) => a - b);
 }
 
 function renderTrendProductOptions(records) {
@@ -2829,6 +3231,12 @@ function todayKey() {
 function cleanText(value) {
   if (value === null || value === undefined) return "";
   return String(value).replace(/\s+/g, " ").trim();
+}
+
+function truncateText(value, maxLength) {
+  const text = cleanText(value);
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 
 function cleanDimension(value) {

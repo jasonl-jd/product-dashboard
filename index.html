@@ -123,6 +123,7 @@
 
         <div class="view-tabs" role="tablist" aria-label="Dashboard views">
           <button class="tab-button active" type="button" role="tab" aria-selected="true" data-view-tab="performance">Performance</button>
+          <button class="tab-button" type="button" role="tab" aria-selected="false" data-view-tab="compare">Product Compare</button>
           <button class="tab-button" type="button" role="tab" aria-selected="false" data-view-tab="regional">Regional Top 20</button>
         </div>
 
@@ -190,6 +191,57 @@
               </article>
             </section>
           </div>
+        </section>
+
+        <section class="dashboard-view" data-view-panel="compare" role="tabpanel" hidden>
+          <section class="panel table-panel compare-panel">
+            <div class="panel-head panel-head-with-control">
+              <div>
+                <span class="panel-kicker">Product Compare</span>
+                <h2>Sales Performance</h2>
+              </div>
+              <div class="compare-controls">
+                <label class="compare-time-control">
+                  <span>Time</span>
+                  <select id="compare-grain">
+                    <option value="day">Day</option>
+                    <option value="week" selected>Week</option>
+                    <option value="month">Month</option>
+                  </select>
+                </label>
+                <label class="compare-metric-control">
+                  <span>Line</span>
+                  <select id="compare-metric">
+                    <option value="sales" selected>Sales $</option>
+                    <option value="units">Units</option>
+                    <option value="both">Both</option>
+                  </select>
+                </label>
+                <label class="compare-product-control">
+                  <span>Product</span>
+                  <input id="compare-product-input" type="search" list="compare-product-options" placeholder="Product or SKU">
+                  <datalist id="compare-product-options"></datalist>
+                </label>
+                <button id="add-compare-product" class="button compact" type="button">Add</button>
+                <button id="clear-compare-products" class="button compact" type="button">Clear</button>
+              </div>
+            </div>
+            <div id="compare-selection" class="compare-selection" aria-label="Selected comparison products"></div>
+            <div id="compare-chart" class="trend-chart compare-chart" role="img" aria-label="Product comparison trend line chart"></div>
+            <div class="table-scroll compare-summary-scroll">
+              <table class="compare-summary-table">
+                <thead>
+                  <tr>
+                    <th>Product</th>
+                    <th>SKU</th>
+                    <th>Net Sales</th>
+                    <th>Net Units Sold</th>
+                  </tr>
+                </thead>
+                <tbody id="compare-summary-tbody"></tbody>
+              </table>
+            </div>
+          </section>
         </section>
 
         <section class="dashboard-view" data-view-panel="regional" role="tabpanel" hidden>

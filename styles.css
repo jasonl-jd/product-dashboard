@@ -576,9 +576,19 @@ select:focus {
   align-items: end;
 }
 
+.compare-controls {
+  display: grid;
+  grid-template-columns: 112px 120px minmax(220px, 320px) auto auto;
+  gap: 8px;
+  align-items: end;
+}
+
 .trend-time-control,
 .trend-metric-control,
-.trend-product-control {
+.trend-product-control,
+.compare-time-control,
+.compare-metric-control,
+.compare-product-control {
   min-width: 0;
 }
 
@@ -679,6 +689,11 @@ select:focus {
 
 .shared-data-scroll {
   max-height: calc(100vh - 340px);
+}
+
+.compare-summary-scroll {
+  max-height: 260px;
+  border-top: 1px solid var(--line);
 }
 
 table {
@@ -824,6 +839,70 @@ th.numeric {
 .trend-chart {
   min-height: 360px;
   padding: 14px 16px 16px;
+}
+
+.compare-chart {
+  min-height: 430px;
+}
+
+.compare-selection {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  min-height: 44px;
+  padding: 10px 16px 0;
+}
+
+.compare-selection-empty {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.compare-chip {
+  display: inline-flex;
+  min-width: 0;
+  max-width: min(320px, 100%);
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--compare-color, var(--green));
+  border-radius: 999px;
+  padding: 6px 8px 6px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 820;
+}
+
+.compare-chip::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--compare-color, var(--green));
+}
+
+.compare-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compare-chip button {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1;
 }
 
 .trend-summary {
@@ -1003,7 +1082,7 @@ th.numeric {
 }
 
 .trend-tooltip-accent {
-  fill: var(--green);
+  fill: var(--compare-color, var(--green));
 }
 
 .trend-tooltip-label {
@@ -1017,6 +1096,69 @@ th.numeric {
   fill: var(--ink);
   font-size: 12px;
   font-weight: 860;
+}
+
+.compare-legend {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 820;
+  text-transform: uppercase;
+}
+
+.compare-legend span {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.compare-legend i {
+  display: inline-block;
+  width: 20px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--compare-color, var(--green));
+}
+
+.compare-product-line {
+  fill: none;
+  stroke: var(--compare-color, var(--green));
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3.5;
+}
+
+.compare-units-line {
+  stroke-dasharray: 7 5;
+  stroke-width: 3;
+}
+
+.compare-point-dot {
+  fill: var(--compare-color, var(--green));
+}
+
+.compare-point-units {
+  stroke-dasharray: 2 2;
+}
+
+.compare-summary-table .compare-summary-product {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-width: 220px;
+}
+
+.compare-summary-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--compare-color, var(--green));
 }
 
 .rank-change {
@@ -1308,7 +1450,8 @@ th.numeric {
     grid-template-columns: 26px minmax(0, 1fr);
   }
 
-  .trend-controls {
+  .trend-controls,
+  .compare-controls {
     width: 100%;
     grid-template-columns: 1fr;
   }
