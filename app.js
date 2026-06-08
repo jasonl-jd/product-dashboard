@@ -194,9 +194,6 @@ function collectDom() {
     kpiUnitsDelta: document.querySelector("#kpi-units-delta"),
     kpiOrders: document.querySelector("#kpi-orders"),
     kpiOrdersDelta: document.querySelector("#kpi-orders-delta"),
-    chartHeading: document.querySelector("#chart-heading"),
-    activeDimension: document.querySelector("#active-dimension"),
-    barChart: document.querySelector("#bar-chart"),
     trendHeading: document.querySelector("#trend-heading"),
     trendGrain: document.querySelector("#trend-grain"),
     trendMetric: document.querySelector("#trend-metric"),
@@ -302,12 +299,20 @@ function bindEvents() {
   document.addEventListener("dragover", handleColumnDragOver);
   document.addEventListener("drop", handleColumnDrop);
   document.addEventListener("dragend", handleColumnDragEnd);
+  document.addEventListener("pointerover", handleTrendPointLayering);
+  document.addEventListener("focusin", handleTrendPointLayering);
   document.addEventListener("pointerover", handleClipTooltipPointerOver);
   document.addEventListener("pointerout", handleClipTooltipPointerOut);
   document.addEventListener("click", hideClipTooltip);
   document.addEventListener("scroll", hideClipTooltip, true);
   window.addEventListener("resize", hideClipTooltip);
 
+}
+
+function handleTrendPointLayering(event) {
+  const pointGroup = event.target instanceof Element ? event.target.closest(".trend-point-group") : null;
+  if (!pointGroup || !pointGroup.parentNode) return;
+  pointGroup.parentNode.appendChild(pointGroup);
 }
 
 function handleClipTooltipPointerOver(event) {
@@ -2525,37 +2530,6 @@ function sortRows(rows) {
   });
 }
 
-function renderChart(rows) {
-  const dimension = getActiveDimension();
-  dom.chartHeading.textContent = `Net Sales by ${dimension.label}`;
-  dom.activeDimension.textContent = dimension.label;
-
-  const limit = getRowLimit();
-  const chartRows = rows
-    .slice(0, Number.isFinite(limit) ? limit : 25)
-    .filter((row) => row.netSales !== 0)
-    .slice(0, 18);
-
-  if (!chartRows.length) {
-    dom.barChart.innerHTML = `<div class="empty-state">No current-period results</div>`;
-    return;
-  }
-
-  const max = Math.max(...chartRows.map((row) => Math.abs(row.netSales)), 1);
-  dom.barChart.innerHTML = chartRows.map((row) => {
-    const width = Math.max(2, Math.abs(row.netSales) / max * 100);
-    return `
-      <div class="bar-row">
-        ${renderClip(row.value, row.value, "bar-label")}
-        <div class="bar-track">
-          <div class="bar-fill ${row.netSales < 0 ? "negative" : ""}" style="--bar-width:${width.toFixed(2)}%"></div>
-        </div>
-        <div class="bar-value">${formatCurrency(row.netSales)}</div>
-      </div>
-    `;
-  }).join("");
-}
-
 function renderFiles() {
   if (!state.files.length) {
     dom.fileTbody.innerHTML = `<tr><td colspan="4">No repository files listed</td></tr>`;
@@ -2611,7 +2585,6 @@ function renderStatusSplitRow(row, isTotal = false) {
 function renderPivotOutputs() {
   const visibleRows = getVisiblePivotRows();
   renderPivotNameFilter();
-  renderChart(visibleRows);
   renderPivotTable(visibleRows);
 }
 
@@ -2706,6 +2679,7 @@ function renderPivotTable(rows) {
   const visibleRows = Number.isFinite(limit) ? rows.slice(0, limit) : rows;
   const columns = getTableColumns("pivot");
   const hiddenCount = getPivotNameRows().filter((row) => getActivePivotNameExclusions().has(row.value)).length;
+  const maxAbsNetSales = Math.max(...visibleRows.map((row) => Math.abs(Number(row.netSales) || 0)), 1);
 
   dom.pivotHeading.textContent = hiddenCount
     ? `Performance by ${dimension.label} (${numberFormat.format(rows.length)} shown)`
@@ -2720,7 +2694,7 @@ function renderPivotTable(rows) {
 
   dom.pivotTbody.innerHTML = visibleRows.map((row) => `
     <tr>
-      ${columns.map((column) => renderPivotCell(row, column)).join("")}
+      ${columns.map((column) => renderPivotCell(row, column, { maxAbsNetSales })).join("")}
     </tr>
   `).join("");
 }
@@ -2736,14 +2710,31 @@ function renderTableHeader(table, column) {
   `;
 }
 
-function renderPivotCell(row, column) {
+function renderPivotCell(row, column, options = {}) {
   if (column.key === "value" || column.key === "status") {
     const value = row[column.key] || "";
     return renderTextCell(value, column);
   }
 
+  if (column.key === "netSales") {
+    return renderPivotSalesCell(row, column, options);
+  }
+
   const value = formatPivotCellValue(row, column.key);
   return `<td class="${tableCellClass(column, getDeltaClass(row, column.key))}">${value}</td>`;
+}
+
+function renderPivotSalesCell(row, column, options) {
+  const value = Number(row.netSales) || 0;
+  const max = Number(options.maxAbsNetSales) || 1;
+  const width = Math.max(value === 0 ? 0 : 2, Math.min(100, Math.abs(value) / max * 100));
+  const directionClass = value < 0 ? "negative" : "positive";
+  return `
+    <td class="${tableCellClass(column, `pivot-bar-cell ${directionClass}`)}" style="--pivot-bar-width:${width.toFixed(2)}%">
+      <span class="pivot-cell-bar" aria-hidden="true"></span>
+      <span class="pivot-cell-value">${formatCurrency(value)}</span>
+    </td>
+  `;
 }
 
 function renderTextCell(value, column) {

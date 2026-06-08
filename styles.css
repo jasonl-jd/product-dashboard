@@ -693,12 +693,6 @@ select:focus {
   display: none;
 }
 
-.visual-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 18px;
-}
-
 .panel {
   min-width: 0;
 }
@@ -868,56 +862,6 @@ select:focus {
   font-weight: 860;
 }
 
-.bar-chart {
-  display: grid;
-  gap: 10px;
-  min-height: 380px;
-  padding: 16px;
-}
-
-.bar-row {
-  display: grid;
-  grid-template-columns: minmax(120px, 0.36fr) minmax(140px, 1fr) 112px;
-  gap: 12px;
-  align-items: center;
-  min-height: 28px;
-}
-
-.bar-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 680;
-}
-
-.bar-track {
-  height: 12px;
-  border-radius: 999px;
-  background: var(--surface-3);
-  overflow: hidden;
-}
-
-.bar-fill {
-  height: 100%;
-  width: var(--bar-width, 0%);
-  border-radius: inherit;
-  background: var(--green);
-}
-
-.bar-fill.negative {
-  background: var(--red);
-}
-
-.bar-value {
-  color: var(--muted);
-  text-align: right;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
 .empty-state {
   display: grid;
   place-items: center;
@@ -1061,6 +1005,36 @@ th.numeric {
   min-width: 180px;
   width: 28%;
   max-width: 380px;
+}
+
+.pivot-table .pivot-bar-cell {
+  position: relative;
+  overflow: hidden;
+}
+
+.pivot-cell-bar {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 6px;
+  z-index: 0;
+  width: var(--pivot-bar-width, 0%);
+  max-width: calc(100% - 12px);
+  border-radius: 4px;
+  background: rgba(255, 221, 0, 0.24);
+  pointer-events: none;
+}
+
+.pivot-bar-cell.negative .pivot-cell-bar {
+  background: rgba(215, 25, 32, 0.18);
+}
+
+.pivot-cell-value {
+  position: relative;
+  z-index: 1;
+  display: block;
+  color: var(--ink);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.52);
 }
 
 .status-split-table {
@@ -1635,8 +1609,7 @@ th.numeric {
   white-space: nowrap;
 }
 
-.clip.is-tooltip-source,
-.bar-label.is-tooltip-source {
+.clip.is-tooltip-source {
   color: #fff;
 }
 
@@ -1688,8 +1661,7 @@ th.numeric {
 
 @media (max-width: 1280px) {
   .topbar,
-  .app-shell,
-  .visual-grid {
+  .app-shell {
     grid-template-columns: 1fr;
   }
 
@@ -1765,15 +1737,6 @@ th.numeric {
 
   .trend-summary {
     grid-template-columns: 1fr 1fr;
-  }
-
-  .bar-row {
-    grid-template-columns: 1fr;
-    gap: 6px;
-  }
-
-  .bar-value {
-    text-align: left;
   }
 
   th,
