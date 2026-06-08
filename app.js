@@ -120,6 +120,8 @@ const state = {
     dir: "desc"
   },
   pivotRows: [],
+  statusRows: [],
+  statusTotals: null,
   productRows: [],
   regionalProductRows: [],
   tradeBrandRows: [],
@@ -220,6 +222,7 @@ function collectDom() {
     compareChart: document.querySelector("#compare-chart"),
     compareSummaryTbody: document.querySelector("#compare-summary-tbody"),
     fileTbody: document.querySelector("#file-tbody"),
+    statusSplitTbody: document.querySelector("#status-split-tbody"),
     pivotHeading: document.querySelector("#pivot-heading"),
     pivotThead: document.querySelector("#pivot-thead"),
     pivotTbody: document.querySelector("#pivot-tbody"),
@@ -1380,9 +1383,13 @@ function renderAll() {
   renderTrendTable(current);
   renderProductCompare(current);
   renderTradeMeeting(filtered);
+  const statusSplit = buildStatusSplit(current, comparison, hasComparison);
+  state.statusRows = statusSplit.rows;
+  state.statusTotals = statusSplit.totals;
   state.pivotRows = buildPivot(current, comparison, hasComparison);
   state.productRows = buildProductResults(current, comparison, hasComparison);
   state.regionalProductRows = buildRegionalTopProducts(current, comparison, hasComparison);
+  renderStatusSplitTable(state.statusRows, state.statusTotals);
   renderPivotOutputs();
   renderFiles();
   renderProductTable(state.productRows);
@@ -2414,6 +2421,67 @@ function buildPivot(currentRecords, comparisonRecords, hasComparison) {
   return sortRows(rows);
 }
 
+function buildStatusSplit(currentRecords, comparisonRecords, hasComparison) {
+  const currentStatusRecords = currentRecords.filter((record) => !isHiddenResultValue(record.status));
+  const comparisonStatusRecords = comparisonRecords.filter((record) => !isHiddenResultValue(record.status));
+  const currentMap = aggregateByDimension(currentStatusRecords, "status");
+  const compareMap = hasComparison ? aggregateByDimension(comparisonStatusRecords, "status") : new Map();
+  const totalSales = sum(currentStatusRecords, "netSales");
+  const totalUnits = sum(currentStatusRecords, "netUnits");
+  const totalOrders = summarize(currentStatusRecords).orders;
+  const totalCompareSales = hasComparison ? sum(comparisonStatusRecords, "netSales") : null;
+  const values = getOrderedStatusValues(currentMap, compareMap);
+
+  const rows = values.map((value) => {
+    const current = currentMap.get(value) || emptyAggregate();
+    const comparison = compareMap.get(value) || emptyAggregate();
+    const change = hasComparison ? current.netSales - comparison.netSales : null;
+
+    return {
+      value,
+      netSales: current.netSales,
+      netUnits: current.netUnits,
+      orders: current.orders.size,
+      salesShare: totalSales ? current.netSales / totalSales : 0,
+      unitsShare: totalUnits ? current.netUnits / totalUnits : 0,
+      hasComparison,
+      compareSales: hasComparison ? comparison.netSales : null,
+      compareUnits: hasComparison ? comparison.netUnits : null,
+      change,
+      changePct: hasComparison ? percentChange(current.netSales, comparison.netSales) : null
+    };
+  });
+
+  return {
+    rows,
+    totals: {
+      value: "Total",
+      netSales: totalSales,
+      netUnits: totalUnits,
+      orders: totalOrders,
+      salesShare: totalSales ? 1 : 0,
+      unitsShare: totalUnits ? 1 : 0,
+      hasComparison,
+      compareSales: totalCompareSales,
+      change: hasComparison ? totalSales - totalCompareSales : null,
+      changePct: hasComparison ? percentChange(totalSales, totalCompareSales) : null
+    }
+  };
+}
+
+function getOrderedStatusValues(currentMap, compareMap) {
+  const values = new Set([...STATUS_DISPLAY_ORDER, ...currentMap.keys(), ...compareMap.keys()]);
+  return Array.from(values)
+    .filter((value) => !isHiddenResultValue(value))
+    .sort(compareStatusLabels)
+    .filter((value) => {
+      if (STATUS_DISPLAY_ORDER.includes(value)) return true;
+      const current = currentMap.get(value);
+      const comparison = compareMap.get(value);
+      return Boolean((current && (current.netSales !== 0 || current.netUnits !== 0 || current.orders.size)) || (comparison && (comparison.netSales !== 0 || comparison.netUnits !== 0 || comparison.orders.size)));
+    });
+}
+
 function aggregateByDimension(records, key) {
   const map = new Map();
   for (const record of records) {
@@ -2505,6 +2573,39 @@ function renderFiles() {
         <td>${renderClip(file.source || "Repository", file.path || file.source || "Repository")}</td>
       </tr>
     `).join("");
+}
+
+function renderStatusSplitTable(rows, totals = null) {
+  if (!dom.statusSplitTbody) return;
+
+  if (!rows.length) {
+    dom.statusSplitTbody.innerHTML = `<tr><td colspan="9">No status results for the selected period and filters</td></tr>`;
+    return;
+  }
+
+  const totalRow = totals || null;
+
+  dom.statusSplitTbody.innerHTML = [
+    ...rows.map((row) => renderStatusSplitRow(row)),
+    totalRow ? renderStatusSplitRow(totalRow, true) : ""
+  ].join("");
+}
+
+function renderStatusSplitRow(row, isTotal = false) {
+  const rowClass = isTotal ? ` class="total-row"` : "";
+  return `
+    <tr${rowClass}>
+      <td>${isTotal ? escapeHtml(row.value) : renderClip(row.value)}</td>
+      <td class="numeric">${formatCurrency(row.netSales)}</td>
+      <td class="numeric">${formatPercent(row.salesShare)}</td>
+      <td class="numeric">${formatNumber(row.netUnits)}</td>
+      <td class="numeric">${formatPercent(row.unitsShare)}</td>
+      <td class="numeric">${formatNumber(row.orders)}</td>
+      <td class="numeric">${row.hasComparison ? formatCurrency(row.compareSales) : ""}</td>
+      <td class="numeric ${getDeltaClass(row, "change")}">${row.hasComparison ? formatCurrency(row.change) : ""}</td>
+      <td class="numeric ${getDeltaClass(row, "changePct")}">${row.hasComparison ? (row.changePct === null ? "n/a" : formatPercent(row.changePct)) : ""}</td>
+    </tr>
+  `;
 }
 
 function renderPivotOutputs() {

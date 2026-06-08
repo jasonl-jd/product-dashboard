@@ -1063,6 +1063,15 @@ th.numeric {
   max-width: 380px;
 }
 
+.status-split-table {
+  min-width: 920px;
+}
+
+.status-split-table th:first-child,
+.status-split-table td:first-child {
+  min-width: 150px;
+}
+
 .product-table .col-productTitle {
   min-width: 280px;
   width: 44%;
