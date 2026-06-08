@@ -10,6 +10,7 @@ const DATA_CACHE_STORE = "parsed-files";
 const DATA_CACHE_VERSION = "parsed-csv-v6";
 const BLANK = "(blank)";
 const MAX_FILTER_OPTIONS = 180;
+const MAX_PIVOT_NAME_FILTER_OPTIONS = 360;
 const SKU_DISPLAY_WIDTH = 8;
 const TREND_SUGGESTION_LIMIT = 20;
 const TREND_SKU_SUGGESTION_MIN = 5;
@@ -112,6 +113,8 @@ const state = {
   filters: Object.fromEntries(DIMENSIONS.map((dimension) => [dimension.key, new Set()])),
   filterSearch: {},
   filterOpen: {},
+  pivotNameSearch: "",
+  pivotNameExclusions: Object.fromEntries(DIMENSIONS.map((dimension) => [dimension.key, new Set()])),
   productSort: {
     key: "netSales",
     dir: "desc"
@@ -218,6 +221,15 @@ function collectDom() {
     pivotHeading: document.querySelector("#pivot-heading"),
     pivotThead: document.querySelector("#pivot-thead"),
     pivotTbody: document.querySelector("#pivot-tbody"),
+    pivotNameFilter: document.querySelector("#pivot-name-filter"),
+    pivotNameFilterButton: document.querySelector("#pivot-name-filter-button"),
+    pivotNameFilterLabel: document.querySelector("#pivot-name-filter-label"),
+    pivotNameFilterMenu: document.querySelector("#pivot-name-filter-menu"),
+    pivotNameFilterSearch: document.querySelector("#pivot-name-filter-search"),
+    pivotNameFilterShowAll: document.querySelector("#pivot-name-filter-show-all"),
+    pivotNameFilterHideVisible: document.querySelector("#pivot-name-filter-hide-visible"),
+    pivotNameFilterOptions: document.querySelector("#pivot-name-filter-options"),
+    pivotNameFilterSummary: document.querySelector("#pivot-name-filter-summary"),
     productHeading: document.querySelector("#product-heading"),
     productThead: document.querySelector("#product-thead"),
     productTbody: document.querySelector("#product-tbody"),
@@ -233,7 +245,7 @@ function bindEvents() {
   dom.refreshData?.addEventListener("click", () => refreshRepositoryData({ preserveDates: true, forceRefresh: true }));
   dom.allDates.addEventListener("click", setAllDates);
   dom.previousPeriod.addEventListener("click", setPreviousPeriod);
-  dom.dimensionSelect.addEventListener("change", renderAll);
+  dom.dimensionSelect.addEventListener("change", handlePivotDimensionChange);
   dom.sortSelect.addEventListener("change", renderAll);
   dom.sortDir.addEventListener("change", renderAll);
   dom.rowLimit.addEventListener("change", renderAll);
@@ -256,6 +268,11 @@ function bindEvents() {
   dom.addCompareProduct.addEventListener("click", addCompareProductFromInput);
   dom.clearCompareProducts.addEventListener("click", clearCompareProducts);
   dom.compareSelection.addEventListener("click", handleCompareSelectionClick);
+  dom.pivotNameFilterButton?.addEventListener("click", togglePivotNameFilterMenu);
+  dom.pivotNameFilterSearch?.addEventListener("input", handlePivotNameFilterSearch);
+  dom.pivotNameFilterOptions?.addEventListener("change", handlePivotNameFilterChange);
+  dom.pivotNameFilterShowAll?.addEventListener("click", showAllPivotNames);
+  dom.pivotNameFilterHideVisible?.addEventListener("click", hideVisiblePivotNames);
 
   [dom.currentStart, dom.currentEnd, dom.compareStart, dom.compareEnd].forEach((input) => {
     input.addEventListener("change", () => {
@@ -272,6 +289,7 @@ function bindEvents() {
   document.addEventListener("click", handleSettingsTabClick);
   document.addEventListener("click", handleTableSortClick);
   document.addEventListener("click", handleColumnOrderClick);
+  document.addEventListener("click", handlePivotNameFilterOutsideClick);
   document.addEventListener("dragstart", handleColumnDragStart);
   document.addEventListener("dragover", handleColumnDragOver);
   document.addEventListener("drop", handleColumnDrop);
@@ -445,6 +463,64 @@ function handleTableSortClick(event) {
   }
 }
 
+function handlePivotDimensionChange() {
+  closePivotNameFilterMenu();
+  state.pivotNameSearch = "";
+  if (dom.pivotNameFilterSearch) dom.pivotNameFilterSearch.value = "";
+  renderAll();
+}
+
+function togglePivotNameFilterMenu() {
+  if (!dom.pivotNameFilterMenu) return;
+  const shouldOpen = dom.pivotNameFilterMenu.hidden;
+  dom.pivotNameFilterMenu.hidden = !shouldOpen;
+  dom.pivotNameFilterButton?.setAttribute("aria-expanded", String(shouldOpen));
+  if (shouldOpen) {
+    renderPivotNameFilter();
+    dom.pivotNameFilterSearch?.focus();
+  }
+}
+
+function closePivotNameFilterMenu() {
+  if (!dom.pivotNameFilterMenu) return;
+  dom.pivotNameFilterMenu.hidden = true;
+  dom.pivotNameFilterButton?.setAttribute("aria-expanded", "false");
+}
+
+function handlePivotNameFilterOutsideClick(event) {
+  if (!dom.pivotNameFilter || dom.pivotNameFilter.contains(event.target)) return;
+  closePivotNameFilterMenu();
+}
+
+function handlePivotNameFilterSearch() {
+  state.pivotNameSearch = dom.pivotNameFilterSearch?.value || "";
+  renderPivotNameFilter();
+}
+
+function handlePivotNameFilterChange(event) {
+  const checkbox = event.target.closest("[data-pivot-name-option]");
+  if (!checkbox) return;
+
+  const exclusions = getActivePivotNameExclusions();
+  if (checkbox.checked) {
+    exclusions.delete(checkbox.value);
+  } else {
+    exclusions.add(checkbox.value);
+  }
+  renderPivotOutputs();
+}
+
+function showAllPivotNames() {
+  getActivePivotNameExclusions().clear();
+  renderPivotOutputs();
+}
+
+function hideVisiblePivotNames() {
+  const exclusions = getActivePivotNameExclusions();
+  getSearchedPivotNameValues().forEach((value) => exclusions.add(value));
+  renderPivotOutputs();
+}
+
 function handleColumnOrderClick(event) {
   const resetButton = event.target.closest("[data-column-reset]");
   if (resetButton) {
@@ -607,7 +683,7 @@ function moveColumn(table, key, direction) {
   state.columnOrders[table] = order;
   saveColumnOrder(table);
   renderColumnSettings();
-  renderPivotTable(state.pivotRows);
+  renderPivotOutputs();
   renderProductTable(state.productRows);
 }
 
@@ -625,7 +701,7 @@ function reorderColumn(table, sourceKey, targetKey, position) {
   state.columnOrders[table] = order;
   saveColumnOrder(table);
   renderColumnSettings();
-  renderPivotTable(state.pivotRows);
+  renderPivotOutputs();
   renderProductTable(state.productRows);
 }
 
@@ -634,7 +710,7 @@ function resetColumnOrder(table) {
   state.columnOrders[table] = [...DEFAULT_COLUMN_ORDERS[table]];
   saveColumnOrder(table);
   renderColumnSettings();
-  renderPivotTable(state.pivotRows);
+  renderPivotOutputs();
   renderProductTable(state.productRows);
 }
 
@@ -1289,9 +1365,8 @@ function renderAll() {
   state.pivotRows = buildPivot(current, comparison, hasComparison);
   state.productRows = buildProductResults(current, comparison, hasComparison);
   state.regionalProductRows = buildRegionalTopProducts(current, comparison, hasComparison);
-  renderChart(state.pivotRows);
+  renderPivotOutputs();
   renderFiles();
-  renderPivotTable(state.pivotRows);
   renderProductTable(state.productRows);
   renderRegionalTopProducts(state.regionalProductRows);
 }
@@ -1449,7 +1524,10 @@ function handleFilterClick(event) {
 function clearAllFilters() {
   for (const dimension of DIMENSIONS) {
     state.filters[dimension.key].clear();
+    state.pivotNameExclusions[dimension.key]?.clear();
   }
+  state.pivotNameSearch = "";
+  if (dom.pivotNameFilterSearch) dom.pivotNameFilterSearch.value = "";
   renderAll();
 }
 
@@ -2402,13 +2480,108 @@ function renderFiles() {
     `).join("");
 }
 
+function renderPivotOutputs() {
+  const visibleRows = getVisiblePivotRows();
+  renderPivotNameFilter();
+  renderChart(visibleRows);
+  renderPivotTable(visibleRows);
+}
+
+function getVisiblePivotRows() {
+  const exclusions = getActivePivotNameExclusions();
+  const rows = exclusions.size
+    ? state.pivotRows.filter((row) => !exclusions.has(row.value))
+    : state.pivotRows;
+  return recalculatePivotShares(rows);
+}
+
+function recalculatePivotShares(rows) {
+  const totalSales = sum(rows, "netSales");
+  const totalUnits = sum(rows, "netUnits");
+  return rows.map((row) => ({
+    ...row,
+    salesShare: totalSales ? row.netSales / totalSales : 0,
+    unitsShare: totalUnits ? row.netUnits / totalUnits : 0
+  }));
+}
+
+function getActivePivotNameExclusions() {
+  const key = getActiveDimension().key;
+  if (!state.pivotNameExclusions[key]) state.pivotNameExclusions[key] = new Set();
+  return state.pivotNameExclusions[key];
+}
+
+function getPivotNameRows() {
+  return (state.pivotRows || []).filter((row) => !isHiddenResultValue(row.value));
+}
+
+function getPivotNameValues() {
+  return getPivotNameRows().map((row) => row.value);
+}
+
+function getSearchedPivotNameValues() {
+  const query = cleanText(state.pivotNameSearch).toLocaleLowerCase();
+  const values = getPivotNameValues();
+  if (!query) return values;
+  return values.filter((value) => cleanText(value).toLocaleLowerCase().includes(query));
+}
+
+function renderPivotNameFilter() {
+  if (!dom.pivotNameFilterButton || !dom.pivotNameFilterOptions) return;
+
+  const dimension = getActiveDimension();
+  const exclusions = getActivePivotNameExclusions();
+  const rows = getPivotNameRows();
+  const visibleRows = getVisiblePivotRows();
+  const hiddenCount = rows.filter((row) => exclusions.has(row.value)).length;
+  const allCount = rows.length;
+  const searchedRows = getSearchedPivotNameValues()
+    .map((value) => rows.find((row) => row.value === value))
+    .filter(Boolean);
+  const displayedRows = searchedRows.slice(0, MAX_PIVOT_NAME_FILTER_OPTIONS);
+  const hasMore = searchedRows.length > displayedRows.length;
+
+  dom.pivotNameFilterButton.disabled = !allCount;
+  dom.pivotNameFilterButton.setAttribute("aria-label", `Filter ${dimension.label} names`);
+  dom.pivotNameFilterLabel.textContent = hiddenCount
+    ? `${dimension.label}: ${numberFormat.format(visibleRows.length)}/${numberFormat.format(allCount)} shown`
+    : `${dimension.label}: All`;
+  if (dom.pivotNameFilterSearch && dom.pivotNameFilterSearch.value !== state.pivotNameSearch) {
+    dom.pivotNameFilterSearch.value = state.pivotNameSearch;
+  }
+
+  dom.pivotNameFilterOptions.innerHTML = displayedRows.length
+    ? displayedRows.map((row) => renderPivotNameFilterOption(row, exclusions)).join("")
+    : `<div class="empty-state pivot-filter-empty">No matching names</div>`;
+
+  const searchNote = hasMore ? ` Showing first ${numberFormat.format(displayedRows.length)} matches.` : "";
+  dom.pivotNameFilterSummary.textContent = hiddenCount
+    ? `${numberFormat.format(hiddenCount)} of ${numberFormat.format(allCount)} hidden.${searchNote}`
+    : `All ${numberFormat.format(allCount)} ${allCount === 1 ? "name is" : "names are"} shown.${searchNote}`;
+}
+
+function renderPivotNameFilterOption(row, exclusions) {
+  const id = `pivot-name-${hashString(`${getActiveDimension().key}:${row.value}`)}`;
+  const checked = !exclusions.has(row.value);
+  return `
+    <label class="pivot-filter-option" for="${id}" title="${escapeHtml(row.value)}">
+      <input id="${id}" type="checkbox" data-pivot-name-option value="${escapeHtml(row.value)}" ${checked ? "checked" : ""}>
+      <span>${escapeHtml(row.value)}</span>
+      <em>${formatCurrency(row.netSales)}</em>
+    </label>
+  `;
+}
+
 function renderPivotTable(rows) {
   const dimension = getActiveDimension();
   const limit = getRowLimit();
   const visibleRows = Number.isFinite(limit) ? rows.slice(0, limit) : rows;
   const columns = getTableColumns("pivot");
+  const hiddenCount = getPivotNameRows().filter((row) => getActivePivotNameExclusions().has(row.value)).length;
 
-  dom.pivotHeading.textContent = `Performance by ${dimension.label}`;
+  dom.pivotHeading.textContent = hiddenCount
+    ? `Performance by ${dimension.label} (${numberFormat.format(rows.length)} shown)`
+    : `Performance by ${dimension.label}`;
   dom.pivotThead.innerHTML = `<tr>${columns.map((column) => renderTableHeader("pivot", column)).join("")}</tr>`;
   updateSortHeaderStates();
 
@@ -3410,7 +3583,7 @@ function getRowLimit() {
 
 function exportPivotCsv() {
   const dimension = getActiveDimension();
-  const rows = state.pivotRows;
+  const rows = getVisiblePivotRows();
   const columns = getTableColumns("pivot");
   const headers = columns.map((column) => column.key === "value" ? dimension.label : column.label);
   const lines = [

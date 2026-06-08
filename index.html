@@ -170,7 +170,26 @@
                   <span class="panel-kicker">Pivot Table</span>
                   <h2 id="pivot-heading">Performance by Shipping Province</h2>
                 </div>
-                <button id="export-pivot-table-csv" class="button compact" type="button">Export CSV</button>
+                <div class="pivot-actions">
+                  <div id="pivot-name-filter" class="pivot-name-filter">
+                    <button id="pivot-name-filter-button" class="button compact" type="button" aria-expanded="false" aria-controls="pivot-name-filter-menu">
+                      <span id="pivot-name-filter-label">Names: All</span>
+                    </button>
+                    <div id="pivot-name-filter-menu" class="pivot-filter-menu" hidden>
+                      <label class="pivot-filter-search">
+                        <span>Search names</span>
+                        <input id="pivot-name-filter-search" type="search" placeholder="Search">
+                      </label>
+                      <div class="pivot-filter-actions">
+                        <button id="pivot-name-filter-show-all" class="text-button" type="button">Show all</button>
+                        <button id="pivot-name-filter-hide-visible" class="text-button" type="button">Hide visible</button>
+                      </div>
+                      <div id="pivot-name-filter-options" class="pivot-filter-options"></div>
+                      <div id="pivot-name-filter-summary" class="pivot-filter-summary">All names shown</div>
+                    </div>
+                  </div>
+                  <button id="export-pivot-table-csv" class="button compact" type="button">Export CSV</button>
+                </div>
               </div>
               <div class="table-scroll pivot-scroll">
                 <table class="pivot-table">

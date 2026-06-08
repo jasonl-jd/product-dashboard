@@ -721,6 +721,94 @@ select:focus {
   width: min(180px, 38vw);
 }
 
+.pivot-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.pivot-name-filter {
+  position: relative;
+}
+
+.pivot-filter-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  display: grid;
+  gap: 10px;
+  width: min(360px, calc(100vw - 48px));
+  border: 1px solid rgba(255, 221, 0, 0.72);
+  border-top: 4px solid var(--green);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(16, 16, 16, 0.98);
+  box-shadow: 0 18px 34px rgba(0, 0, 0, 0.48);
+}
+
+.pivot-filter-search {
+  color: var(--muted);
+}
+
+.pivot-filter-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pivot-filter-options {
+  display: grid;
+  gap: 4px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.pivot-filter-option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 28px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.pivot-filter-option input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--green);
+}
+
+.pivot-filter-option span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pivot-filter-option em {
+  color: var(--muted);
+  font-style: normal;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pivot-filter-summary {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.pivot-filter-empty {
+  min-height: 72px;
+  font-size: 12px;
+}
+
 .trend-controls {
   display: grid;
   grid-template-columns: 112px 120px minmax(220px, 320px) auto;
