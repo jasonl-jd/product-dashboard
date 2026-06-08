@@ -142,6 +142,8 @@ const percentFormat = new Intl.NumberFormat("en-CA", { style: "percent", maximum
 const collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
 let filterSearchTimer = null;
 let columnDrag = null;
+let clipTooltipTarget = null;
+let clipTooltipFrame = null;
 
 document.addEventListener("DOMContentLoaded", init);
 
@@ -271,7 +273,110 @@ function bindEvents() {
   document.addEventListener("dragover", handleColumnDragOver);
   document.addEventListener("drop", handleColumnDrop);
   document.addEventListener("dragend", handleColumnDragEnd);
+  document.addEventListener("pointerover", handleClipTooltipPointerOver);
+  document.addEventListener("pointerout", handleClipTooltipPointerOut);
+  document.addEventListener("click", hideClipTooltip);
+  document.addEventListener("scroll", hideClipTooltip, true);
+  window.addEventListener("resize", hideClipTooltip);
 
+}
+
+function handleClipTooltipPointerOver(event) {
+  const target = getClipTooltipTarget(event.target);
+  if (!target || target === clipTooltipTarget || !shouldShowClipTooltip(target)) return;
+  showClipTooltip(target);
+}
+
+function handleClipTooltipPointerOut(event) {
+  if (!clipTooltipTarget) return;
+  if (event.relatedTarget instanceof Node && clipTooltipTarget.contains(event.relatedTarget)) return;
+
+  const target = getClipTooltipTarget(event.target);
+  if (!target || target === clipTooltipTarget) hideClipTooltip();
+}
+
+function getClipTooltipTarget(target) {
+  return target instanceof Element ? target.closest("[data-clip-tooltip]") : null;
+}
+
+function shouldShowClipTooltip(target) {
+  const text = cleanText(target.dataset.clipTooltip);
+  if (!text) return false;
+  return target.scrollWidth > target.clientWidth + 1 || target.scrollHeight > target.clientHeight + 1;
+}
+
+function showClipTooltip(target) {
+  const tooltip = ensureClipTooltip();
+  const text = cleanText(target.dataset.clipTooltip);
+  if (!text) return;
+
+  if (clipTooltipFrame) cancelAnimationFrame(clipTooltipFrame);
+  clipTooltipTarget?.classList.remove("is-tooltip-source");
+  clipTooltipTarget = target;
+  clipTooltipTarget.classList.add("is-tooltip-source");
+
+  tooltip.classList.remove("visible");
+  tooltip.setAttribute("aria-hidden", "false");
+  tooltip.textContent = text;
+  tooltip.style.left = "-9999px";
+  tooltip.style.top = "-9999px";
+
+  clipTooltipFrame = requestAnimationFrame(() => {
+    if (clipTooltipTarget !== target) return;
+    positionClipTooltip(target, tooltip);
+    tooltip.classList.add("visible");
+    clipTooltipFrame = null;
+  });
+}
+
+function hideClipTooltip() {
+  if (clipTooltipFrame) {
+    cancelAnimationFrame(clipTooltipFrame);
+    clipTooltipFrame = null;
+  }
+
+  clipTooltipTarget?.classList.remove("is-tooltip-source");
+  clipTooltipTarget = null;
+
+  if (!dom.clipTooltip) return;
+  dom.clipTooltip.classList.remove("visible");
+  dom.clipTooltip.setAttribute("aria-hidden", "true");
+}
+
+function ensureClipTooltip() {
+  if (!dom.clipTooltip) {
+    dom.clipTooltip = document.createElement("div");
+    dom.clipTooltip.className = "clip-tooltip";
+    dom.clipTooltip.setAttribute("role", "tooltip");
+    dom.clipTooltip.setAttribute("aria-hidden", "true");
+    document.body.appendChild(dom.clipTooltip);
+  }
+  return dom.clipTooltip;
+}
+
+function positionClipTooltip(target, tooltip) {
+  const margin = 12;
+  const gap = 8;
+  const targetRect = target.getBoundingClientRect();
+  const tooltipRect = tooltip.getBoundingClientRect();
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+  const maxLeft = Math.max(margin, viewportWidth - tooltipRect.width - margin);
+  let left = targetRect.left + Math.min(12, targetRect.width / 2);
+  if (targetRect.width < tooltipRect.width) left = targetRect.left + targetRect.width / 2 - tooltipRect.width / 2;
+  left = Math.min(Math.max(margin, left), maxLeft);
+
+  let top = targetRect.bottom + gap;
+  if (top + tooltipRect.height > viewportHeight - margin) {
+    top = targetRect.top - tooltipRect.height - gap;
+  }
+  if (top < margin) {
+    top = Math.min(viewportHeight - tooltipRect.height - margin, targetRect.bottom + gap);
+  }
+  top = Math.max(margin, top);
+
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${top}px`;
 }
 
 function handleViewTabClick(event) {
@@ -1155,6 +1260,7 @@ function normalizeRecord(cells, fieldIndex, fileName, sourceHash, rowNumber) {
 }
 
 function renderAll() {
+  hideClipTooltip();
   const dateSummary = getDatasetDateSummary();
   dom.dataRange.textContent = dateSummary ? `${dateSummary.min} to ${dateSummary.max}` : "No data loaded";
   dom.recordCount.textContent = `${numberFormat.format(state.records.length)} rows`;
@@ -1795,10 +1901,10 @@ function renderProductCompareSummary(series) {
       <td>
         <div class="compare-summary-product">
           <span class="compare-summary-swatch" style="--compare-color:${product.color}"></span>
-          <div class="clip" title="${escapeHtml(product.productTitle)}">${escapeHtml(product.productTitle)}</div>
+          ${renderClip(product.productTitle)}
         </div>
       </td>
-      <td><div class="clip" title="${escapeHtml(product.sku)}">${escapeHtml(product.sku)}</div></td>
+      <td>${renderClip(product.sku)}</td>
       <td class="numeric">${formatCurrency(product.totalSales)}</td>
       <td class="numeric">${formatNumber(product.totalUnits)}</td>
     </tr>
@@ -2258,7 +2364,7 @@ function renderChart(rows) {
     const width = Math.max(2, Math.abs(row.netSales) / max * 100);
     return `
       <div class="bar-row">
-        <div class="bar-label" title="${escapeHtml(row.value)}">${escapeHtml(row.value)}</div>
+        ${renderClip(row.value, row.value, "bar-label")}
         <div class="bar-track">
           <div class="bar-fill ${row.netSales < 0 ? "negative" : ""}" style="--bar-width:${width.toFixed(2)}%"></div>
         </div>
@@ -2279,10 +2385,10 @@ function renderFiles() {
     .sort((a, b) => collator.compare(a.name, b.name))
     .map((file) => `
       <tr>
-        <td><div class="clip" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</div></td>
+        <td>${renderClip(file.name)}</td>
         <td class="numeric">${numberFormat.format(file.rowsAdded || 0)}</td>
         <td>${escapeHtml(compactDateRange(file.minDate, file.maxDate))}</td>
-        <td><div class="clip" title="${escapeHtml(file.path || file.source || "")}">${escapeHtml(file.source || "Repository")}</div></td>
+        <td>${renderClip(file.source || "Repository", file.path || file.source || "Repository")}</td>
       </tr>
     `).join("");
 }
@@ -2331,7 +2437,14 @@ function renderPivotCell(row, column) {
 }
 
 function renderTextCell(value, column) {
-  return `<td class="${tableCellClass(column)}"><div class="clip" title="${escapeHtml(value)}">${escapeHtml(value)}</div></td>`;
+  return `<td class="${tableCellClass(column)}">${renderClip(value)}</td>`;
+}
+
+function renderClip(value, tooltip = value, className = "clip") {
+  const text = cleanText(value);
+  const tooltipText = cleanText(tooltip || text);
+  const tooltipAttr = tooltipText ? ` data-clip-tooltip="${escapeHtml(tooltipText)}"` : "";
+  return `<div class="${escapeHtml(className)}"${tooltipAttr}>${escapeHtml(text)}</div>`;
 }
 
 function tableCellClass(column, extra = "") {
@@ -2660,8 +2773,8 @@ function renderRegionalTopProducts(rows) {
       <td>${escapeHtml(row.region)}</td>
       <td class="numeric">${numberFormat.format(row.rank)}</td>
       <td class="numeric rank-change ${getRankChangeClass(row.rankChange)}">${escapeHtml(row.rankChange)}</td>
-      <td><div class="clip" title="${escapeHtml(row.productTitle)}">${escapeHtml(row.productTitle)}</div></td>
-      <td><div class="clip" title="${escapeHtml(row.sku)}">${escapeHtml(row.sku)}</div></td>
+      <td>${renderClip(row.productTitle)}</td>
+      <td>${renderClip(row.sku)}</td>
       <td class="numeric">${formatCurrency(row.netSales)}</td>
       <td class="numeric">${formatNumber(row.netUnits)}</td>
     </tr>
@@ -2892,34 +3005,50 @@ function buildTradeAnalysisBullets({ currentSummary, comparisonSummary, hasCompa
   const topStatus = getTopMetricRow(statusRows);
   const topGroup = getTopMetricRow(groupRows);
   const topBrand = brandRows[0];
+  const nextBrands = brandRows.slice(1, 3);
   const biggestGain = hasComparison ? brandRows.slice().sort((a, b) => (b.change || 0) - (a.change || 0))[0] : null;
   const biggestDecline = hasComparison ? brandRows.slice().sort((a, b) => (a.change || 0) - (b.change || 0))[0] : null;
-  const topSku = Array.from(aggregateProducts(currentRecords).values())
-    .sort((a, b) => b.netSales - a.netSales || collator.compare(a.productTitle, b.productTitle))[0];
-  const bullets = [
-    `Fiscal week ${formatTradeDateRange(state.tradePeriods?.current)} delivered ${formatCurrency(currentSummary.netSales)} on ${formatNumber(currentSummary.netUnits)} units${hasComparison ? `, ${formatTradeMovement(currentSummary.netSales, comparisonSummary.netSales)} vs compare week` : ""}.`
-  ];
+  const topProducts = Array.from(aggregateProducts(currentRecords).values())
+    .sort((a, b) => b.netSales - a.netSales || collator.compare(a.productTitle, b.productTitle))
+    .slice(0, 3);
+  const mixDrivers = [
+    topStatus ? `${topStatus.label} was the lead price bucket at ${formatCurrency(topStatus.netSales)}` : "",
+    topGroup ? `${topGroup.label} was the lead product group at ${formatCurrency(topGroup.netSales)}` : ""
+  ].filter(Boolean);
+  const opening = `Fiscal week ${formatTradeDateRange(state.tradePeriods?.current)} delivered ${formatCurrency(currentSummary.netSales)} on ${formatNumber(currentSummary.netUnits)} units${hasComparison ? `, ${formatTradeMovement(currentSummary.netSales, comparisonSummary.netSales)} versus the compare week` : ""}.${mixDrivers.length ? ` ${mixDrivers.join("; ")}.` : ""}`;
+  const narrative = [opening];
 
-  if (topStatus) {
-    bullets.push(`${topStatus.label} led price status performance at ${formatCurrency(topStatus.netSales)} and ${formatNumber(topStatus.netUnits)} units${hasComparison ? `, ${formatTradeMovement(topStatus.netSales, topStatus.compareSales)}` : ""}.`);
-  }
-  if (topGroup) {
-    bullets.push(`${topGroup.label} led product groups at ${formatCurrency(topGroup.netSales)} and ${formatNumber(topGroup.netUnits)} units${hasComparison ? `, ${formatTradeMovement(topGroup.netSales, topGroup.compareSales)}` : ""}.`);
-  }
   if (topBrand) {
-    bullets.push(`${topBrand.brand} was the top brand at ${formatCurrency(topBrand.netSales)}${hasComparison ? `, ${formatTradeMovement(topBrand.netSales, topBrand.compareSales)}` : ""}.`);
-  }
-  if (topSku) {
-    bullets.push(`Key SKU driver: ${topSku.sku} | ${topSku.productTitle} at ${formatCurrency(topSku.netSales)} and ${formatNumber(topSku.netUnits)} units.`);
-  }
-  if (hasComparison && biggestGain && biggestGain.change > 0) {
-    bullets.push(`Largest brand riser: ${biggestGain.brand}, up ${formatCurrency(Math.abs(biggestGain.change))}${biggestGain.changePct === null ? "" : ` (${formatSignedPercent(biggestGain.changePct)})`}.`);
-  }
-  if (hasComparison && biggestDecline && biggestDecline.change < 0) {
-    bullets.push(`Largest brand faller: ${biggestDecline.brand}, down ${formatCurrency(Math.abs(biggestDecline.change))}${biggestDecline.changePct === null ? "" : ` (${formatSignedPercent(biggestDecline.changePct)})`}.`);
+    const supportingBrands = nextBrands.length
+      ? ` Supporting brand volume came from ${formatTradeBrandDriverList(nextBrands)}.`
+      : "";
+    narrative.push(`${topBrand.brand} anchored brand performance at ${formatCurrency(topBrand.netSales)}${hasComparison ? `, ${formatTradeMovement(topBrand.netSales, topBrand.compareSales)}` : ""}. Its key SKU drivers were ${topBrand.keySkuText || "not available"}.${supportingBrands}`);
   }
 
-  return bullets;
+  if (topProducts.length) {
+    narrative.push(`Product demand was concentrated in ${formatTradeProductDriverList(topProducts)}, giving the week its clearest SKU-level sales drivers.`);
+  }
+
+  if (hasComparison && biggestGain && biggestGain.change > 0) {
+    const declineText = biggestDecline && biggestDecline.change < 0
+      ? `, while ${biggestDecline.brand} was the largest brand faller, down ${formatCurrency(Math.abs(biggestDecline.change))}${biggestDecline.changePct === null ? "" : ` (${formatSignedPercent(biggestDecline.changePct)})`}`
+      : "";
+    narrative.push(`Momentum was led by ${biggestGain.brand}, up ${formatCurrency(Math.abs(biggestGain.change))}${biggestGain.changePct === null ? "" : ` (${formatSignedPercent(biggestGain.changePct)})`}${declineText}.`);
+  }
+
+  return narrative.filter((item) => cleanText(item));
+}
+
+function formatTradeBrandDriverList(brands) {
+  return brands
+    .map((brand) => `${brand.brand} (${formatCurrency(brand.netSales)})`)
+    .join(" and ");
+}
+
+function formatTradeProductDriverList(products) {
+  return products
+    .map((product) => `${product.sku} | ${product.productTitle} (${formatCurrency(product.netSales)}, ${formatNumber(product.netUnits)} units)`)
+    .join("; ");
 }
 
 function getTopMetricRow(rows) {
@@ -2930,7 +3059,7 @@ function getTopMetricRow(rows) {
 
 function renderTradeAnalysis(bullets) {
   dom.tradeAnalysis.innerHTML = bullets.length
-    ? `<ul>${bullets.map((bullet) => `<li>${escapeHtml(bullet)}</li>`).join("")}</ul>`
+    ? `<div class="trade-narrative">${bullets.map((bullet) => `<p>${escapeHtml(bullet)}</p>`).join("")}</div>`
     : `<div class="empty-state">No weekly trade analysis available</div>`;
 }
 
@@ -2953,12 +3082,12 @@ function renderTradeBrandTable(rows) {
 
   dom.tradeBrandTbody.innerHTML = rows.map((row) => `
     <tr>
-      <td><div class="clip" title="${escapeHtml(row.brand)}">${escapeHtml(row.brand)}</div></td>
+      <td>${renderClip(row.brand)}</td>
       <td class="numeric">${formatCurrency(row.netSales)}</td>
       <td class="numeric">${formatNumber(row.netUnits)}</td>
       <td class="numeric ${getDeltaClass({ hasComparison: row.change !== null, change: row.change }, "change")}">${row.change === null ? "" : formatCurrency(row.change)}</td>
       <td class="numeric ${getDeltaClass({ hasComparison: row.change !== null, change: row.change }, "changePct")}">${row.changePct === null ? "n/a" : formatSignedPercent(row.changePct)}</td>
-      <td><div class="clip" title="${escapeHtml(row.keySkuText)}">${escapeHtml(row.keySkuText)}</div></td>
+      <td>${renderClip(row.keySkuText)}</td>
     </tr>
   `).join("");
 }
@@ -2977,7 +3106,8 @@ function buildTradeRegionalTopProducts(records, comparisonRecords = [], hasCompa
       : [];
     const comparisonRanks = new Map(comparisonProducts.map((product, index) => [product.productKey, index + 1]));
     const productRecords = groupRecordsByProduct(regionalRecords);
-    const products = buildProductResults(regionalRecords)
+    const products = buildProductResults(regionalRecords, regionalComparisonRecords, hasComparison)
+      .filter((product) => product.netSales !== 0 || product.netUnits !== 0)
       .sort((a, b) => sortRegionalProducts(a, b, "netSales"))
       .slice(0, 20);
 
@@ -3059,7 +3189,7 @@ function renderTradeRegionalSections(rows) {
             ${regionRows.map((row) => `
               <tr>
                 <td class="numeric">${formatNumber(row.rank)}</td>
-                <td><div class="clip" title="${escapeHtml(row.productTitle)}">${escapeHtml(row.productTitle)}</div></td>
+                <td>${renderClip(row.productTitle)}</td>
                 <td class="numeric">${formatCurrency(row.netSales)}</td>
                 <td class="numeric">${formatNumber(row.netUnits)}</td>
                 <td>${escapeHtml(row.status)}</td>
@@ -3075,6 +3205,12 @@ function renderTradeRegionalSections(rows) {
 
 function buildTradeRegionalBullets(rows) {
   const top = rows[0];
+  const salesRiser = rows
+    .filter((row) => Number(row.change) > 0)
+    .sort((a, b) => (b.change || 0) - (a.change || 0))[0];
+  const salesFaller = rows
+    .filter((row) => Number(row.change) < 0)
+    .sort((a, b) => (a.change || 0) - (b.change || 0))[0];
   const risers = rows.filter((row) => String(row.rankChange).startsWith("+"))
     .sort((a, b) => Number(b.rankChange) - Number(a.rankChange))
     .slice(0, 2);
@@ -3091,6 +3227,8 @@ function buildTradeRegionalBullets(rows) {
   if (top) bullets.push(`Top seller: ${top.productTitle} at ${formatCurrency(top.netSales)} and ${formatNumber(top.netUnits)} units.`);
   if (groupRows[0]) bullets.push(`${groupRows[0][0]} led product groups across top sellers at ${formatCurrency(groupRows[0][1].netSales)}.`);
   if (statusRows[0]) bullets.push(`${statusRows[0][0]} led price status mix at ${formatCurrency(statusRows[0][1].netSales)}.`);
+  if (salesRiser) bullets.push(`Net sales riser: ${salesRiser.productTitle}, up ${formatCurrency(Math.abs(salesRiser.change))}${salesRiser.changePct === null ? "" : ` (${formatSignedPercent(salesRiser.changePct)})`}.`);
+  if (salesFaller) bullets.push(`Net sales faller: ${salesFaller.productTitle}, down ${formatCurrency(Math.abs(salesFaller.change))}${salesFaller.changePct === null ? "" : ` (${formatSignedPercent(salesFaller.changePct)})`}.`);
 
   const movers = [
     ...risers.map((row) => `${row.productTitle} (${row.rankChange})`),
