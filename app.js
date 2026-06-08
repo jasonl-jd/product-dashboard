@@ -180,6 +180,8 @@ function collectDom() {
     exportProductCsv: document.querySelector("#export-product-csv"),
     exportRegionalCsv: document.querySelector("#export-regional-csv"),
     clearFilters: document.querySelector("#clear-filters"),
+    expandFilters: document.querySelector("#expand-filters"),
+    collapseFilters: document.querySelector("#collapse-filters"),
     filters: document.querySelector("#filters"),
     status: document.querySelector("#status"),
     dataRange: document.querySelector("#data-range"),
@@ -255,6 +257,8 @@ function bindEvents() {
   dom.exportProductCsv.addEventListener("click", exportProductCsv);
   dom.exportRegionalCsv.addEventListener("click", exportRegionalTopProductsCsv);
   dom.clearFilters.addEventListener("click", clearAllFilters);
+  dom.expandFilters?.addEventListener("click", () => setAllFilterGroupsOpen(true));
+  dom.collapseFilters?.addEventListener("click", () => setAllFilterGroupsOpen(false));
   dom.trendGrain.addEventListener("change", handleTrendGrainChange);
   dom.trendMetric.addEventListener("change", handleTrendMetricChange);
   dom.trendProductInput.addEventListener("input", handleTrendProductInput);
@@ -289,6 +293,7 @@ function bindEvents() {
   document.addEventListener("click", handleSettingsTabClick);
   document.addEventListener("click", handleTableSortClick);
   document.addEventListener("click", handleColumnOrderClick);
+  document.addEventListener("click", handleCollapseToggle);
   document.addEventListener("click", handlePivotNameFilterOutsideClick);
   document.addEventListener("dragstart", handleColumnDragStart);
   document.addEventListener("dragover", handleColumnDragOver);
@@ -461,6 +466,19 @@ function handleTableSortClick(event) {
     }
     renderProductTable(state.productRows);
   }
+}
+
+function handleCollapseToggle(event) {
+  const button = event.target.closest("[data-collapse-target]");
+  if (!button) return;
+
+  const target = document.getElementById(button.dataset.collapseTarget);
+  if (!target) return;
+
+  const isExpanded = target.hidden;
+  target.hidden = !isExpanded;
+  button.setAttribute("aria-expanded", String(isExpanded));
+  button.textContent = isExpanded ? "Collapse" : "Expand";
 }
 
 function handlePivotDimensionChange() {
@@ -1529,6 +1547,15 @@ function clearAllFilters() {
   state.pivotNameSearch = "";
   if (dom.pivotNameFilterSearch) dom.pivotNameFilterSearch.value = "";
   renderAll();
+}
+
+function setAllFilterGroupsOpen(open) {
+  for (const dimension of DIMENSIONS) {
+    state.filterOpen[dimension.key] = open;
+  }
+  dom.filters.querySelectorAll(".filter-group").forEach((group) => {
+    group.open = open;
+  });
 }
 
 function handleFilterToggle(event) {

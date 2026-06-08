@@ -254,6 +254,15 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
+}
+
+.section-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 label {
@@ -721,12 +730,21 @@ select:focus {
   width: min(180px, 38vw);
 }
 
-.pivot-actions {
+.pivot-actions,
+.panel-actions {
   display: flex;
   gap: 8px;
   align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
+}
+
+[data-collapse-target][aria-expanded="false"] {
+  border-color: var(--green);
+}
+
+[hidden] {
+  display: none !important;
 }
 
 .pivot-name-filter {
@@ -815,7 +833,7 @@ select:focus {
 
 .trend-controls {
   display: grid;
-  grid-template-columns: 112px 120px minmax(220px, 320px) auto;
+  grid-template-columns: 112px 120px minmax(220px, 320px) auto auto;
   gap: 8px;
   align-items: end;
 }

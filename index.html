@@ -94,7 +94,11 @@
         <section class="control-section filters-section">
           <div class="section-title-row">
             <div class="section-title">Filters</div>
-            <button id="clear-filters" class="text-button" type="button">Clear</button>
+            <div class="section-actions">
+              <button id="expand-filters" class="text-button" type="button">Expand All</button>
+              <button id="collapse-filters" class="text-button" type="button">Collapse All</button>
+              <button id="clear-filters" class="text-button" type="button">Clear</button>
+            </div>
           </div>
           <div id="filters" class="filters"></div>
         </section>
@@ -159,6 +163,7 @@
                     <datalist id="trend-product-options"></datalist>
                   </label>
                   <button id="clear-trend-product" class="button compact" type="button">Clear</button>
+                  <button class="button compact panel-toggle" type="button" data-collapse-target="trend-chart" aria-expanded="true">Collapse</button>
                 </div>
               </div>
               <div id="trend-chart" class="trend-chart" role="img" aria-label="Net sales trend line chart"></div>
@@ -268,7 +273,10 @@
                   <span class="panel-kicker">Regional Top Sellers</span>
                   <h2>Regional Slide Tables</h2>
                 </div>
-                <button id="export-trade-regional-csv" class="button compact" type="button">Export Regional CSV</button>
+                <div class="panel-actions">
+                  <button class="button compact panel-toggle" type="button" data-collapse-target="trade-regional-sections" aria-expanded="true">Collapse</button>
+                  <button id="export-trade-regional-csv" class="button compact" type="button">Export Regional CSV</button>
+                </div>
               </div>
               <div id="trade-regional-sections" class="trade-regional-sections"></div>
             </section>
