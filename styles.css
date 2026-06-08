@@ -749,6 +749,10 @@ select:focus {
   box-shadow: 0 18px 34px rgba(0, 0, 0, 0.48);
 }
 
+.pivot-filter-menu[hidden] {
+  display: none;
+}
+
 .pivot-filter-search {
   color: var(--muted);
 }
