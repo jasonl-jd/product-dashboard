@@ -7,7 +7,7 @@ window.addEventListener("unhandledrejection", (event) => reportGlobalError(event
 const DATA_MANIFEST_URL = "data/manifest.json";
 const DATA_CACHE_DB = "product-performance-dashboard";
 const DATA_CACHE_STORE = "parsed-files";
-const DATA_CACHE_VERSION = "parsed-csv-v5";
+const DATA_CACHE_VERSION = "parsed-csv-v6";
 const BLANK = "(blank)";
 const MAX_FILTER_OPTIONS = 180;
 const SKU_DISPLAY_WIDTH = 8;
@@ -20,6 +20,8 @@ const PRODUCT_COMPARE_LIMIT = 4;
 const PRODUCT_COMPARE_COLORS = ["#ffdd00", "#4fb6ff", "#d71920", "#f7f7f2"];
 const PRICE_STATUS_LABELS = ["Full Price", "Markdown"];
 const STATUS_DISPLAY_ORDER = ["Full Price", "Markdown", "Return"];
+const EXCLUDED_ANALYSIS_PRODUCT_TITLES = new Set(["[refund adjustment]", "refund adjustment"]);
+const UNASSIGNED_ATTRIBUTE_VALUES = new Set(["false"]);
 
 const DIMENSIONS = [
   { key: "shippingProvince", label: "Shipping Province", headers: ["Shipping Province"] },
@@ -104,6 +106,7 @@ const DEFAULT_COLUMN_ORDERS = {
 
 const state = {
   records: [],
+  analysisRecords: [],
   files: [],
   rowKeys: new Set(),
   filters: Object.fromEntries(DIMENSIONS.map((dimension) => [dimension.key, new Set()])),
@@ -665,7 +668,11 @@ async function refreshRepositoryData({ preserveDates, forceRefresh } = { preserv
     if (!state.files.length) {
       setStatus("Ready. Add CSV files to data/manifest.json to populate the shared dashboard.");
     } else {
-      setStatus(`Ready. Loaded ${numberFormat.format(state.records.length)} shared rows from ${numberFormat.format(state.files.length)} repository file${state.files.length === 1 ? "" : "s"}.`);
+      const excludedRows = state.records.length - getAnalysisRecords().length;
+      const excludedText = excludedRows
+        ? ` ${numberFormat.format(excludedRows)} refund adjustment row${excludedRows === 1 ? "" : "s"} excluded from analysis.`
+        : "";
+      setStatus(`Ready. Loaded ${numberFormat.format(state.records.length)} shared rows from ${numberFormat.format(state.files.length)} repository file${state.files.length === 1 ? "" : "s"}.${excludedText}`);
     }
   } catch (error) {
     console.error(error);
@@ -724,6 +731,7 @@ async function loadRepositoryData({ forceRefresh = false } = {}) {
   }
 
   state.records = records;
+  state.analysisRecords = filterAnalysisRecords(records);
   state.files = fileMetas;
   state.rowKeys = new Set(records.map((record) => record.rowKey));
   pruneParsedFileCache(cacheKeys);
@@ -1261,12 +1269,13 @@ function normalizeRecord(cells, fieldIndex, fileName, sourceHash, rowNumber) {
 
 function renderAll() {
   hideClipTooltip();
+  const analysisRecords = getAnalysisRecords();
   const dateSummary = getDatasetDateSummary();
   dom.dataRange.textContent = dateSummary ? `${dateSummary.min} to ${dateSummary.max}` : "No data loaded";
-  dom.recordCount.textContent = `${numberFormat.format(state.records.length)} rows`;
+  dom.recordCount.textContent = `${numberFormat.format(analysisRecords.length)} analysis rows`;
 
   renderFilters();
-  const filtered = applyDimensionFilters(state.records);
+  const filtered = applyDimensionFilters(analysisRecords);
   const current = filtered.filter((record) => inDateRange(record, dom.currentStart.value, dom.currentEnd.value));
   const hasComparison = hasComparisonPeriod();
   const comparison = hasComparison ? filtered.filter((record) => inDateRange(record, dom.compareStart.value, dom.compareEnd.value)) : [];
@@ -1314,7 +1323,7 @@ function setKpi(valueElement, deltaElement, value, delta, hasComparison = true) 
 }
 
 function renderFilters() {
-  if (!state.records.length) {
+  if (!getAnalysisRecords().length) {
     dom.filters.innerHTML = `<div class="empty-state">No filters</div>`;
     return;
   }
@@ -1368,7 +1377,7 @@ function renderFilterOptionMarkup(dimension) {
 
 function getFilterCounts(key) {
   const counts = new Map();
-  for (const record of state.records) {
+  for (const record of getAnalysisRecords()) {
     const value = record[key] || BLANK;
     if (isHiddenFilterValue(value)) continue;
     if (!counts.has(value)) counts.set(value, 0);
@@ -1546,7 +1555,7 @@ function handleCompareSelectionClick(event) {
 }
 
 function getCurrentTrendRecords() {
-  return applyDimensionFilters(state.records)
+  return applyDimensionFilters(getAnalysisRecords())
     .filter((record) => inDateRange(record, dom.currentStart.value, dom.currentEnd.value));
 }
 
@@ -3169,9 +3178,12 @@ function renderTradeRegionalSections(rows) {
           <span class="panel-kicker">${escapeHtml(region)}</span>
           <h3>${escapeHtml(region)} Top 20</h3>
         </div>
-        <ul>
-          ${buildTradeRegionalBullets(regionRows).map((bullet) => `<li>${escapeHtml(bullet)}</li>`).join("")}
-        </ul>
+        <div class="trade-region-analysis">
+          <p class="trade-region-narrative">${escapeHtml(buildTradeRegionalNarrative(region, regionRows))}</p>
+          <ul>
+            ${buildTradeRegionalBullets(regionRows).map((bullet) => `<li>${escapeHtml(bullet)}</li>`).join("")}
+          </ul>
+        </div>
       </div>
       <div class="table-scroll">
         <table class="trade-regional-table">
@@ -3203,14 +3215,44 @@ function renderTradeRegionalSections(rows) {
   `).join("");
 }
 
+function buildTradeRegionalNarrative(region, rows) {
+  if (!rows.length) return "";
+
+  const top = rows[0];
+  const totalSales = sum(rows, "netSales");
+  const totalUnits = sum(rows, "netUnits");
+  const topProducts = rows.slice(0, 3);
+  const topProductSales = sum(topProducts, "netSales");
+  const topShare = totalSales ? topProductSales / totalSales : 0;
+  const salesRiser = getTradeRegionalSalesRiser(rows);
+  const salesFaller = getTradeRegionalSalesFaller(rows);
+  const newItems = rows.filter((row) => row.rankChange === "NEW").slice(0, 2);
+  const concentration = topShare >= 0.5
+    ? "Performance was concentrated in the top of the list"
+    : "Performance was spread across a broader top-20 base";
+  const topProductText = topProducts
+    .map((row) => row.productTitle)
+    .filter(Boolean)
+    .join(", ");
+  const momentum = [];
+
+  if (salesRiser) {
+    momentum.push(`${salesRiser.productTitle} created the strongest net-sales lift, up ${formatCurrency(Math.abs(salesRiser.change))}${salesRiser.changePct === null ? "" : ` (${formatSignedPercent(salesRiser.changePct)})`}`);
+  }
+  if (salesFaller) {
+    momentum.push(`${salesFaller.productTitle} was the main sales drag, down ${formatCurrency(Math.abs(salesFaller.change))}${salesFaller.changePct === null ? "" : ` (${formatSignedPercent(salesFaller.changePct)})`}`);
+  }
+  if (newItems.length) {
+    momentum.push(`${newItems.map((row) => row.productTitle).join(" and ")} entered the top 20`);
+  }
+
+  return `${region}'s top 20 delivered ${formatCurrency(totalSales)} on ${formatNumber(totalUnits)} units, led by ${top.productTitle} at ${formatCurrency(top.netSales)}. ${concentration}${topProductText ? `, with ${topProductText} representing ${formatPercent(topShare)} of sales` : ""}. ${momentum.length ? `${momentum.join("; ")}.` : "The top sellers held their position without a major week-over-week movement signal."}`;
+}
+
 function buildTradeRegionalBullets(rows) {
   const top = rows[0];
-  const salesRiser = rows
-    .filter((row) => Number(row.change) > 0)
-    .sort((a, b) => (b.change || 0) - (a.change || 0))[0];
-  const salesFaller = rows
-    .filter((row) => Number(row.change) < 0)
-    .sort((a, b) => (a.change || 0) - (b.change || 0))[0];
+  const salesRiser = getTradeRegionalSalesRiser(rows);
+  const salesFaller = getTradeRegionalSalesFaller(rows);
   const risers = rows.filter((row) => String(row.rankChange).startsWith("+"))
     .sort((a, b) => Number(b.rankChange) - Number(a.rankChange))
     .slice(0, 2);
@@ -3218,15 +3260,9 @@ function buildTradeRegionalBullets(rows) {
     .sort((a, b) => Number(a.rankChange) - Number(b.rankChange))
     .slice(0, 2);
   const newItems = rows.filter((row) => row.rankChange === "NEW").slice(0, 2);
-  const groupRows = Array.from(aggregateTradeBreakdownFromRows(rows, (row) => row.tradeGroup).entries())
-    .sort((a, b) => b[1].netSales - a[1].netSales || collator.compare(a[0], b[0]));
-  const statusRows = Array.from(aggregateTradeBreakdownFromRows(rows, (row) => row.status).entries())
-    .sort((a, b) => b[1].netSales - a[1].netSales || collator.compare(a[0], b[0]));
   const bullets = [];
 
   if (top) bullets.push(`Top seller: ${top.productTitle} at ${formatCurrency(top.netSales)} and ${formatNumber(top.netUnits)} units.`);
-  if (groupRows[0]) bullets.push(`${groupRows[0][0]} led product groups across top sellers at ${formatCurrency(groupRows[0][1].netSales)}.`);
-  if (statusRows[0]) bullets.push(`${statusRows[0][0]} led price status mix at ${formatCurrency(statusRows[0][1].netSales)}.`);
   if (salesRiser) bullets.push(`Net sales riser: ${salesRiser.productTitle}, up ${formatCurrency(Math.abs(salesRiser.change))}${salesRiser.changePct === null ? "" : ` (${formatSignedPercent(salesRiser.changePct)})`}.`);
   if (salesFaller) bullets.push(`Net sales faller: ${salesFaller.productTitle}, down ${formatCurrency(Math.abs(salesFaller.change))}${salesFaller.changePct === null ? "" : ` (${formatSignedPercent(salesFaller.changePct)})`}.`);
 
@@ -3239,17 +3275,16 @@ function buildTradeRegionalBullets(rows) {
   return bullets;
 }
 
-function aggregateTradeBreakdownFromRows(rows, getter) {
-  const map = new Map();
-  for (const row of rows) {
-    const label = getter(row) || BLANK;
-    if (!label || label === BLANK) continue;
-    if (!map.has(label)) map.set(label, emptyMetricAggregate());
-    const aggregate = map.get(label);
-    aggregate.netSales += row.netSales;
-    aggregate.netUnits += row.netUnits;
-  }
-  return map;
+function getTradeRegionalSalesRiser(rows) {
+  return rows
+    .filter((row) => Number(row.change) > 0)
+    .sort((a, b) => (b.change || 0) - (a.change || 0))[0] || null;
+}
+
+function getTradeRegionalSalesFaller(rows) {
+  return rows
+    .filter((row) => Number(row.change) < 0)
+    .sort((a, b) => (a.change || 0) - (b.change || 0))[0] || null;
 }
 
 function summarize(records) {
@@ -3268,6 +3303,24 @@ function summarize(records) {
     netUnits,
     orders: orders.size
   };
+}
+
+function filterAnalysisRecords(records) {
+  return records.filter((record) => !isExcludedAnalysisRecord(record));
+}
+
+function getAnalysisRecords() {
+  return Array.isArray(state.analysisRecords) ? state.analysisRecords : filterAnalysisRecords(state.records);
+}
+
+function isExcludedAnalysisRecord(record) {
+  const title = normalizeExcludedProductTitle(record?.productTitle);
+  return EXCLUDED_ANALYSIS_PRODUCT_TITLES.has(title);
+}
+
+function normalizeExcludedProductTitle(value) {
+  const title = cleanText(value).toLocaleLowerCase();
+  return title.replace(/^\[(.*)\]$/, "$1").trim();
 }
 
 function applyDimensionFilters(records) {
@@ -3333,11 +3386,12 @@ function setPreviousPeriod(shouldRender = true) {
 }
 
 function getDatasetDateSummary() {
-  if (!state.records.length) return null;
+  const records = getAnalysisRecords();
+  if (!records.length) return null;
   let min = "";
   let max = "";
 
-  for (const record of state.records) {
+  for (const record of records) {
     if (!record.dateKey) continue;
     if (!min || record.dateKey < min) min = record.dateKey;
     if (!max || record.dateKey > max) max = record.dateKey;
@@ -3910,7 +3964,9 @@ function truncateText(value, maxLength) {
 }
 
 function cleanDimension(value) {
-  return cleanText(value) || BLANK;
+  const text = cleanText(value);
+  if (!text || isUnassignedAttributeValue(text)) return BLANK;
+  return text;
 }
 
 function removeHiddenFilterSelections(selected) {
@@ -3921,11 +3977,11 @@ function removeHiddenFilterSelections(selected) {
 }
 
 function isHiddenFilterValue(value) {
-  return isBlankValue(value) || isReferenceErrorValue(value);
+  return isBlankValue(value) || isReferenceErrorValue(value) || isUnassignedAttributeValue(value);
 }
 
 function isHiddenResultValue(value) {
-  return isBlankValue(value);
+  return isBlankValue(value) || isUnassignedAttributeValue(value);
 }
 
 function isBlankValue(value) {
@@ -3938,12 +3994,17 @@ function isReferenceErrorValue(value) {
   return text === "#REF" || text === "#REF!";
 }
 
+function isUnassignedAttributeValue(value) {
+  return UNASSIGNED_ATTRIBUTE_VALUES.has(cleanText(value).toLocaleLowerCase());
+}
+
 function hydrateRecord(record) {
   const hydrated = {
     ...record,
-    status: normalizeStatus(record.status),
-    region: getRegion(record.shippingProvince)
+    ...Object.fromEntries(DIMENSIONS.map((dimension) => [dimension.key, cleanDimension(record[dimension.key])])),
+    status: normalizeStatus(record.status)
   };
+  hydrated.region = getRegion(hydrated.shippingProvince);
   hydrated.orderKey = getOrderKey(hydrated);
   return hydrated;
 }
@@ -3965,6 +4026,7 @@ function isScientificNotation(value) {
 }
 
 function getRegion(province) {
+  if (isBlankValue(province) || isUnassignedAttributeValue(province)) return BLANK;
   const normalizedProvince = normalizeRegionProvince(province);
   return PROVINCE_TO_REGION.get(normalizedProvince) || "Other";
 }
