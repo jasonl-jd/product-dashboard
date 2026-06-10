@@ -137,6 +137,13 @@ const state = {
   compareGrain: "week",
   compareMetric: "sales",
   compareShowCompare: true,
+  periods: {
+    currentStart: "",
+    currentEnd: "",
+    compareStart: "",
+    compareEnd: ""
+  },
+  periodsDirty: false,
   columnOrders: {
     pivot: [],
     product: []
@@ -174,6 +181,8 @@ function collectDom() {
     currentEnd: document.querySelector("#current-end"),
     compareStart: document.querySelector("#compare-start"),
     compareEnd: document.querySelector("#compare-end"),
+    applyPeriods: document.querySelector("#apply-periods"),
+    swapPeriods: document.querySelector("#swap-periods"),
     allDates: document.querySelector("#all-dates"),
     previousPeriod: document.querySelector("#previous-period"),
     refreshData: document.querySelector("#refresh-data"),
@@ -251,8 +260,10 @@ function collectDom() {
 
 function bindEvents() {
   dom.refreshData?.addEventListener("click", () => refreshRepositoryData({ preserveDates: true, forceRefresh: true }));
+  dom.applyPeriods?.addEventListener("click", applyPeriodInputs);
+  dom.swapPeriods?.addEventListener("click", swapPeriodInputs);
   dom.allDates.addEventListener("click", setAllDates);
-  dom.previousPeriod.addEventListener("click", setPreviousPeriod);
+  dom.previousPeriod.addEventListener("click", () => setPreviousPeriod(false));
   dom.dimensionSelect.addEventListener("change", handlePivotDimensionChange);
   dom.sortSelect.addEventListener("change", renderAll);
   dom.sortDir.addEventListener("change", renderAll);
@@ -287,10 +298,8 @@ function bindEvents() {
   dom.pivotNameFilterHideVisible?.addEventListener("click", hideVisiblePivotNames);
 
   [dom.currentStart, dom.currentEnd, dom.compareStart, dom.compareEnd].forEach((input) => {
-    input.addEventListener("change", () => {
-      state.dateTouched = true;
-      renderAll();
-    });
+    input.addEventListener("input", handlePeriodInputChange);
+    input.addEventListener("change", handlePeriodInputChange);
   });
 
   dom.filters.addEventListener("input", handleFilterInput);
@@ -793,7 +802,13 @@ async function refreshRepositoryData({ preserveDates, forceRefresh } = { preserv
 
   try {
     await loadRepositoryData({ forceRefresh });
-    ensureDateDefaults(!preserveDates || !state.dateTouched);
+    const shouldApplyDateDefaults = !preserveDates || !state.dateTouched;
+    ensureDateDefaults(shouldApplyDateDefaults);
+    if (shouldApplyDateDefaults || !state.periodsDirty || (!state.periods.currentStart && !state.periods.currentEnd)) {
+      syncAppliedPeriodsFromInputs();
+    } else {
+      updateApplyPeriodsButton();
+    }
     renderAll();
 
     if (!state.files.length) {
@@ -1407,10 +1422,11 @@ function renderAll() {
   dom.recordCount.textContent = `${numberFormat.format(analysisRecords.length)} analysis rows`;
 
   renderFilters();
+  const periods = getAppliedPeriods();
   const filtered = applyDimensionFilters(analysisRecords);
-  const current = filtered.filter((record) => inDateRange(record, dom.currentStart.value, dom.currentEnd.value));
-  const hasComparison = hasComparisonPeriod();
-  const comparison = hasComparison ? filtered.filter((record) => inDateRange(record, dom.compareStart.value, dom.compareEnd.value)) : [];
+  const current = filtered.filter((record) => inDateRange(record, periods.currentStart, periods.currentEnd));
+  const hasComparison = hasComparisonPeriod(periods);
+  const comparison = hasComparison ? filtered.filter((record) => inDateRange(record, periods.compareStart, periods.compareEnd)) : [];
   const currentSummary = summarize(current);
   const compareSummary = summarize(comparison);
 
@@ -1614,6 +1630,102 @@ function updateFilterCountLabel(key) {
   label.textContent = selected?.size ? numberFormat.format(selected.size) : "All";
 }
 
+function handlePeriodInputChange() {
+  state.dateTouched = true;
+  markPeriodsDirty();
+}
+
+function markPeriodsDirty(message = "Period changes pending. Click Apply Periods to refresh the dashboard.") {
+  state.periodsDirty = !periodInputsMatchApplied();
+  updateApplyPeriodsButton();
+  if (state.periodsDirty) setStatus(message);
+}
+
+function applyPeriodInputs() {
+  const error = validatePeriodInputs();
+  if (error) {
+    setStatus(error, "error");
+    return false;
+  }
+
+  syncAppliedPeriodsFromInputs();
+  renderAll();
+  setStatus(`Periods applied: ${state.periods.currentStart || "all"} to ${state.periods.currentEnd || "latest"}.`);
+  return true;
+}
+
+function swapPeriodInputs() {
+  const periods = readPeriodInputs();
+  if (!periods.compareStart || !periods.compareEnd) {
+    setStatus("Choose both Compare Start and Compare End before swapping periods.", "error");
+    return;
+  }
+
+  dom.currentStart.value = periods.compareStart;
+  dom.currentEnd.value = periods.compareEnd;
+  dom.compareStart.value = periods.currentStart;
+  dom.compareEnd.value = periods.currentEnd;
+  state.dateTouched = true;
+  markPeriodsDirty("Current and compare periods swapped. Click Apply Periods to refresh the dashboard.");
+}
+
+function readPeriodInputs() {
+  return {
+    currentStart: dom.currentStart.value,
+    currentEnd: dom.currentEnd.value,
+    compareStart: dom.compareStart.value,
+    compareEnd: dom.compareEnd.value
+  };
+}
+
+function getAppliedPeriods() {
+  return state.periods.currentStart || state.periods.currentEnd
+    ? state.periods
+    : readPeriodInputs();
+}
+
+function syncAppliedPeriodsFromInputs() {
+  state.periods = readPeriodInputs();
+  state.periodsDirty = false;
+  updateApplyPeriodsButton();
+}
+
+function periodInputsMatchApplied() {
+  const inputs = readPeriodInputs();
+  const applied = getAppliedPeriods();
+  return inputs.currentStart === applied.currentStart
+    && inputs.currentEnd === applied.currentEnd
+    && inputs.compareStart === applied.compareStart
+    && inputs.compareEnd === applied.compareEnd;
+}
+
+function updateApplyPeriodsButton() {
+  if (!dom.applyPeriods) return;
+  dom.applyPeriods.disabled = !state.periodsDirty;
+  dom.applyPeriods.classList.toggle("primary", state.periodsDirty);
+}
+
+function validatePeriodInputs() {
+  const periods = readPeriodInputs();
+  if (!periods.currentStart || !periods.currentEnd) {
+    return "Choose both Current Start and Current End before applying the period.";
+  }
+  if (periods.currentStart > periods.currentEnd) {
+    return "Current Start must be on or before Current End.";
+  }
+
+  const hasCompareStart = Boolean(periods.compareStart);
+  const hasCompareEnd = Boolean(periods.compareEnd);
+  if (hasCompareStart !== hasCompareEnd) {
+    return "Choose both Compare Start and Compare End, or leave both compare fields blank.";
+  }
+  if (hasCompareStart && periods.compareStart > periods.compareEnd) {
+    return "Compare Start must be on or before Compare End.";
+  }
+
+  return "";
+}
+
 function handleTrendProductInput() {
   state.trendProductQuery = dom.trendProductInput.value;
   renderTrendTable(getCurrentTrendRecords());
@@ -1712,14 +1824,16 @@ function handleCompareSelectionClick(event) {
 }
 
 function getCurrentTrendRecords() {
+  const periods = getAppliedPeriods();
   return getFilteredTrendRecords()
-    .filter((record) => inDateRange(record, dom.currentStart.value, dom.currentEnd.value));
+    .filter((record) => inDateRange(record, periods.currentStart, periods.currentEnd));
 }
 
 function getCompareTrendRecords() {
-  if (!hasComparisonPeriod()) return [];
+  const periods = getAppliedPeriods();
+  if (!hasComparisonPeriod(periods)) return [];
   return getFilteredTrendRecords()
-    .filter((record) => inDateRange(record, dom.compareStart.value, dom.compareEnd.value));
+    .filter((record) => inDateRange(record, periods.compareStart, periods.compareEnd));
 }
 
 function getFilteredTrendRecords() {
@@ -1737,9 +1851,10 @@ function renderTrendTable(filteredRecords) {
   const compareTrendRecords = shouldShowTrendCompareLine()
     ? filterTrendProductRecords(getCompareTrendRecords())
     : [];
-  const rows = buildTrendRows(trendRecords, state.trendGrain, dom.currentStart.value, dom.currentEnd.value);
+  const periods = getAppliedPeriods();
+  const rows = buildTrendRows(trendRecords, state.trendGrain, periods.currentStart, periods.currentEnd);
   const compareRows = compareTrendRecords.length
-    ? buildTrendRows(compareTrendRecords, state.trendGrain, dom.compareStart.value, dom.compareEnd.value)
+    ? buildTrendRows(compareTrendRecords, state.trendGrain, periods.compareStart, periods.compareEnd)
     : [];
   const grainLabel = getTrendGrainLabel(state.trendGrain);
   dom.trendHeading.textContent = state.trendProductQuery ? `${grainLabel} Trend by Product` : `${grainLabel} Trend`;
@@ -2086,12 +2201,13 @@ function buildProductCompareSeries(records, products, comparisonRecords = []) {
   }
 
   const grain = state.compareGrain || "week";
+  const periods = getAppliedPeriods();
   const series = products.map((product, index) => {
     const currentProductRecords = productRecords.get(product.productKey) || [];
     const compareRecords = compareProductRecords.get(product.productKey) || [];
-    const rows = buildTrendRows(currentProductRecords, grain, dom.currentStart.value, dom.currentEnd.value);
+    const rows = buildTrendRows(currentProductRecords, grain, periods.currentStart, periods.currentEnd);
     const compareRows = comparisonRecords.length
-      ? buildTrendRows(compareRecords, grain, dom.compareStart.value, dom.compareEnd.value)
+      ? buildTrendRows(compareRecords, grain, periods.compareStart, periods.compareEnd)
       : [];
     const totalSales = sum(currentProductRecords, "netSales");
     const totalUnits = sum(currentProductRecords, "netUnits");
@@ -3286,11 +3402,12 @@ function renderTradeMeeting(filteredRecords) {
 }
 
 function getTradePeriods() {
-  const current = getFiscalWeekRangeForSelection(dom.currentStart.value, dom.currentEnd.value);
+  const periods = getAppliedPeriods();
+  const current = getFiscalWeekRangeForSelection(periods.currentStart, periods.currentEnd);
   let comparison = null;
 
-  if (dom.compareStart.value || dom.compareEnd.value) {
-    comparison = getFiscalWeekRangeForSelection(dom.compareStart.value, dom.compareEnd.value);
+  if (periods.compareStart || periods.compareEnd) {
+    comparison = getFiscalWeekRangeForSelection(periods.compareStart, periods.compareEnd);
   } else if (current) {
     comparison = getPreviousFiscalWeekRange(current);
   }
@@ -3796,8 +3913,8 @@ function inDateRange(record, start, end) {
   return true;
 }
 
-function hasComparisonPeriod() {
-  return Boolean(dom.compareStart.value && dom.compareEnd.value);
+function hasComparisonPeriod(periods = getAppliedPeriods()) {
+  return Boolean(periods.compareStart && periods.compareEnd);
 }
 
 function ensureDateDefaults(force = false) {
@@ -3827,7 +3944,7 @@ function setAllDates() {
   dom.currentStart.value = summary.min;
   dom.currentEnd.value = summary.max;
   setPreviousPeriod(false);
-  renderAll();
+  markPeriodsDirty("All dates selected. Click Apply Periods to refresh the dashboard.");
 }
 
 function setPreviousPeriod(shouldRender = true) {
@@ -3840,7 +3957,12 @@ function setPreviousPeriod(shouldRender = true) {
   dom.compareStart.value = dateKey(compareStart);
   dom.compareEnd.value = dateKey(compareEnd);
   state.dateTouched = true;
-  if (shouldRender) renderAll();
+  if (shouldRender !== false) {
+    syncAppliedPeriodsFromInputs();
+    renderAll();
+  } else {
+    markPeriodsDirty("Previous comparison period selected. Click Apply Periods to refresh the dashboard.");
+  }
 }
 
 function getDatasetDateSummary() {
@@ -3886,8 +4008,9 @@ function exportProductCsv() {
     headers,
     ...rows.map((row) => columns.map((column) => getProductExportValue(row, column.key)))
   ];
-  const start = dom.currentStart.value || "all";
-  const end = dom.currentEnd.value || todayKey();
+  const periods = getAppliedPeriods();
+  const start = periods.currentStart || "all";
+  const end = periods.currentEnd || todayKey();
   downloadFile(`product-results-${start}-to-${end}.csv`, lines.map(csvLine).join("\n"), "text/csv");
 }
 
@@ -3906,8 +4029,9 @@ function exportRegionalTopProductsCsv() {
       row.netUnits
     ])
   ];
-  const start = dom.currentStart.value || "all";
-  const end = dom.currentEnd.value || todayKey();
+  const periods = getAppliedPeriods();
+  const start = periods.currentStart || "all";
+  const end = periods.currentEnd || todayKey();
   downloadFile(`regional-top-20-${start}-to-${end}.csv`, lines.map(csvLine).join("\n"), "text/csv");
 }
 
