@@ -259,10 +259,18 @@ button {
 
 .section-actions {
   display: flex;
-  gap: 10px;
+  gap: 6px;
   align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
+}
+
+.section-actions .text-button {
+  font-size: 10px;
+  line-height: 1.1;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+  white-space: nowrap;
 }
 
 label {
@@ -827,14 +835,14 @@ select:focus {
 
 .trend-controls {
   display: grid;
-  grid-template-columns: 112px 120px minmax(220px, 320px) auto auto;
+  grid-template-columns: 112px 120px 82px minmax(220px, 320px) auto auto;
   gap: 8px;
   align-items: end;
 }
 
 .compare-controls {
   display: grid;
-  grid-template-columns: 112px 120px minmax(220px, 320px) auto auto;
+  grid-template-columns: 112px 120px 82px minmax(220px, 320px) auto auto;
   gap: 8px;
   align-items: end;
 }
@@ -844,8 +852,24 @@ select:focus {
 .trend-product-control,
 .compare-time-control,
 .compare-metric-control,
-.compare-product-control {
+.compare-product-control,
+.compare-period-toggle {
   min-width: 0;
+}
+
+.compare-period-toggle {
+  align-content: end;
+}
+
+.compare-period-toggle input {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  accent-color: var(--green);
+}
+
+.compare-period-toggle.is-disabled {
+  opacity: 0.46;
 }
 
 .pill {
@@ -1226,6 +1250,17 @@ th.numeric {
   stroke-width: 3.4;
 }
 
+.compare-period-line {
+  opacity: 0.58;
+  stroke-dasharray: 5 8;
+  stroke-width: 3;
+}
+
+.compare-period-units-line {
+  stroke-dasharray: 2 8;
+  stroke-width: 2.8;
+}
+
 .sales-area {
   fill: rgba(255, 221, 0, 0.13);
 }
@@ -1250,6 +1285,19 @@ th.numeric {
 
 .trend-point-units {
   fill: #4fb6ff;
+}
+
+.trend-point-dot.compare-period-point {
+  opacity: 0.92;
+  fill: var(--surface);
+}
+
+.trend-point-sales.compare-period-point {
+  stroke: var(--green);
+}
+
+.trend-point-units.compare-period-point {
+  stroke: #4fb6ff;
 }
 
 .trend-point-group:hover .trend-point-dot,
@@ -1308,6 +1356,11 @@ th.numeric {
   background: repeating-linear-gradient(90deg, #4fb6ff 0 7px, transparent 7px 11px);
 }
 
+.legend-swatch.compare-period {
+  background: repeating-linear-gradient(90deg, var(--green) 0 7px, transparent 7px 12px);
+  box-shadow: 0 0 0 1px rgba(255, 221, 0, 0.24);
+}
+
 .trend-tooltip {
   opacity: 0;
   pointer-events: none;
@@ -1324,6 +1377,11 @@ th.numeric {
   stroke: rgba(255, 221, 0, 0.78);
   stroke-width: 1.2;
   filter: drop-shadow(0 14px 20px rgba(0, 0, 0, 0.42));
+}
+
+.compare-period-tooltip .trend-tooltip-card {
+  stroke-dasharray: 5 4;
+  stroke-opacity: 0.88;
 }
 
 .trend-tooltip-accent {
@@ -1370,6 +1428,11 @@ th.numeric {
   background: var(--compare-color, var(--green));
 }
 
+.compare-legend i.compare-period-swatch {
+  background: repeating-linear-gradient(90deg, var(--green) 0 7px, transparent 7px 12px);
+  box-shadow: 0 0 0 1px rgba(255, 221, 0, 0.24);
+}
+
 .compare-product-line {
   fill: none;
   stroke: var(--compare-color, var(--green));
@@ -1383,12 +1446,29 @@ th.numeric {
   stroke-width: 3;
 }
 
+.compare-period-product-line {
+  opacity: 0.54;
+  stroke-dasharray: 5 8;
+  stroke-width: 2.8;
+}
+
+.compare-period-product-line.compare-units-line {
+  stroke-dasharray: 2 8;
+  stroke-width: 2.6;
+}
+
 .compare-point-dot {
   fill: var(--compare-color, var(--green));
 }
 
 .compare-point-units {
   stroke-dasharray: 2 2;
+}
+
+.compare-point-dot.compare-period-product-point {
+  opacity: 0.9;
+  fill: var(--surface);
+  stroke: var(--compare-color, var(--green));
 }
 
 .compare-summary-table .compare-summary-product {

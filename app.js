@@ -130,10 +130,12 @@ const state = {
   trendProductQuery: "",
   trendGrain: "week",
   trendMetric: "sales",
+  trendShowCompare: true,
   compareProductQuery: "",
   compareProducts: [],
   compareGrain: "week",
   compareMetric: "sales",
+  compareShowCompare: true,
   columnOrders: {
     pivot: [],
     product: []
@@ -197,6 +199,7 @@ function collectDom() {
     trendHeading: document.querySelector("#trend-heading"),
     trendGrain: document.querySelector("#trend-grain"),
     trendMetric: document.querySelector("#trend-metric"),
+    trendCompareToggle: document.querySelector("#trend-compare-toggle"),
     trendProductInput: document.querySelector("#trend-product-input"),
     trendProductOptions: document.querySelector("#trend-product-options"),
     clearTrendProduct: document.querySelector("#clear-trend-product"),
@@ -211,6 +214,7 @@ function collectDom() {
     exportTradeRegionalCsv: document.querySelector("#export-trade-regional-csv"),
     compareGrain: document.querySelector("#compare-grain"),
     compareMetric: document.querySelector("#compare-metric"),
+    compareCompareToggle: document.querySelector("#compare-compare-toggle"),
     compareProductInput: document.querySelector("#compare-product-input"),
     compareProductOptions: document.querySelector("#compare-product-options"),
     addCompareProduct: document.querySelector("#add-compare-product"),
@@ -261,12 +265,14 @@ function bindEvents() {
   dom.collapseFilters?.addEventListener("click", () => setAllFilterGroupsOpen(false));
   dom.trendGrain.addEventListener("change", handleTrendGrainChange);
   dom.trendMetric.addEventListener("change", handleTrendMetricChange);
+  dom.trendCompareToggle?.addEventListener("change", handleTrendCompareToggleChange);
   dom.trendProductInput.addEventListener("input", handleTrendProductInput);
   dom.clearTrendProduct.addEventListener("click", clearTrendProduct);
   dom.exportTradeBrandCsv.addEventListener("click", exportTradeBrandCsv);
   dom.exportTradeRegionalCsv.addEventListener("click", exportTradeRegionalCsv);
   dom.compareGrain.addEventListener("change", handleCompareGrainChange);
   dom.compareMetric.addEventListener("change", handleCompareMetricChange);
+  dom.compareCompareToggle?.addEventListener("change", handleCompareToggleChange);
   dom.compareProductInput.addEventListener("input", handleCompareProductInput);
   dom.compareProductInput.addEventListener("keydown", handleCompareProductKeydown);
   dom.addCompareProduct.addEventListener("click", addCompareProductFromInput);
@@ -1599,6 +1605,11 @@ function handleTrendMetricChange() {
   renderTrendTable(getCurrentTrendRecords());
 }
 
+function handleTrendCompareToggleChange() {
+  state.trendShowCompare = Boolean(dom.trendCompareToggle?.checked);
+  renderTrendTable(getCurrentTrendRecords());
+}
+
 function clearTrendProduct() {
   state.trendProductQuery = "";
   dom.trendProductInput.value = "";
@@ -1623,6 +1634,11 @@ function handleCompareGrainChange() {
 
 function handleCompareMetricChange() {
   state.compareMetric = getCompareMetricMode();
+  renderProductCompare(getCurrentTrendRecords());
+}
+
+function handleCompareToggleChange() {
+  state.compareShowCompare = Boolean(dom.compareCompareToggle?.checked);
   renderProductCompare(getCurrentTrendRecords());
 }
 
@@ -1672,8 +1688,18 @@ function handleCompareSelectionClick(event) {
 }
 
 function getCurrentTrendRecords() {
-  return applyDimensionFilters(getAnalysisRecords())
+  return getFilteredTrendRecords()
     .filter((record) => inDateRange(record, dom.currentStart.value, dom.currentEnd.value));
+}
+
+function getCompareTrendRecords() {
+  if (!hasComparisonPeriod()) return [];
+  return getFilteredTrendRecords()
+    .filter((record) => inDateRange(record, dom.compareStart.value, dom.compareEnd.value));
+}
+
+function getFilteredTrendRecords() {
+  return applyDimensionFilters(getAnalysisRecords());
 }
 
 function renderTrendTable(filteredRecords) {
@@ -1681,9 +1707,16 @@ function renderTrendTable(filteredRecords) {
 
   state.trendGrain = dom.trendGrain.value || state.trendGrain || "week";
   state.trendMetric = getTrendMetricMode();
+  syncCompareLineToggle(dom.trendCompareToggle, state.trendShowCompare);
   renderTrendProductOptions(filteredRecords);
   const trendRecords = filterTrendProductRecords(filteredRecords);
+  const compareTrendRecords = shouldShowTrendCompareLine()
+    ? filterTrendProductRecords(getCompareTrendRecords())
+    : [];
   const rows = buildTrendRows(trendRecords, state.trendGrain, dom.currentStart.value, dom.currentEnd.value);
+  const compareRows = compareTrendRecords.length
+    ? buildTrendRows(compareTrendRecords, state.trendGrain, dom.compareStart.value, dom.compareEnd.value)
+    : [];
   const grainLabel = getTrendGrainLabel(state.trendGrain);
   dom.trendHeading.textContent = state.trendProductQuery ? `${grainLabel} Trend by Product` : `${grainLabel} Trend`;
 
@@ -1692,21 +1725,23 @@ function renderTrendTable(filteredRecords) {
     return;
   }
 
-  dom.trendChart.innerHTML = renderTrendLineChart(rows);
+  dom.trendChart.innerHTML = renderTrendLineChart(rows, compareRows);
 }
 
-function renderTrendLineChart(rows) {
+function renderTrendLineChart(rows, compareRows = []) {
   const metricMode = getTrendMetricMode();
   const showSales = metricMode !== "units";
   const showUnits = metricMode !== "sales";
   const showBoth = showSales && showUnits;
+  const showCompare = shouldShowTrendCompareLine() && compareRows.length > 0;
   const width = 860;
   const height = 360;
   const pad = { top: 30, right: showBoth ? 92 : 46, bottom: 86, left: 88 };
   const plotWidth = width - pad.left - pad.right;
   const plotHeight = height - pad.top - pad.bottom;
-  const salesScale = getTrendScale(rows.map((row) => row.netSales));
-  const unitsScale = getTrendScale(rows.map((row) => row.netUnits));
+  const compareRowsForAxis = showCompare ? compareRows.slice(0, rows.length) : [];
+  const salesScale = getTrendScale(rows.map((row) => row.netSales).concat(compareRowsForAxis.map((row) => row.netSales)));
+  const unitsScale = getTrendScale(rows.map((row) => row.netUnits).concat(compareRowsForAxis.map((row) => row.netUnits)));
   const primaryScale = showSales ? salesScale : unitsScale;
   const xForIndex = (index) => {
     if (rows.length === 1) return pad.left + plotWidth / 2;
@@ -1723,10 +1758,22 @@ function renderTrendLineChart(rows) {
     x: xForIndex(index),
     y: yForValue(row.netUnits, unitsScale)
   }));
+  const compareSalesPoints = compareRowsForAxis.map((row, index) => ({
+    ...row,
+    x: xForIndex(index),
+    y: yForValue(row.netSales, salesScale)
+  }));
+  const compareUnitsPoints = compareRowsForAxis.map((row, index) => ({
+    ...row,
+    x: xForIndex(index),
+    y: yForValue(row.netUnits, unitsScale)
+  }));
   const primaryTicks = buildTrendYAxisTicks(primaryScale.min, primaryScale.max, 4);
   const secondaryTicks = showBoth ? buildTrendYAxisTicks(unitsScale.min, unitsScale.max, 4) : [];
   const salesLinePath = buildTrendPath(salesPoints);
   const unitsLinePath = buildTrendPath(unitsPoints);
+  const compareSalesLinePath = buildTrendPath(compareSalesPoints);
+  const compareUnitsLinePath = buildTrendPath(compareUnitsPoints);
   const salesBaselineY = yForValue(0, salesScale);
   const unitsBaselineY = yForValue(0, unitsScale);
   const baselineY = showSales ? salesBaselineY : unitsBaselineY;
@@ -1759,6 +1806,7 @@ function renderTrendLineChart(rows) {
     <div class="trend-legend" aria-hidden="true">
       ${showSales ? `<span><i class="legend-swatch sales"></i>Sales $</span>` : ""}
       ${showUnits ? `<span><i class="legend-swatch units"></i>Units</span>` : ""}
+      ${showCompare ? `<span><i class="legend-swatch compare-period"></i>Compare Period</span>` : ""}
     </div>
     <svg class="trend-line-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Trend line">
       <rect x="0" y="0" width="${width}" height="${height}" class="trend-svg-bg"></rect>
@@ -1776,6 +1824,8 @@ function renderTrendLineChart(rows) {
       <line x1="${pad.left}" y1="${baselineY.toFixed(2)}" x2="${width - pad.right}" y2="${baselineY.toFixed(2)}" class="trend-zero-line"></line>
       ${showSales ? `<path d="${salesAreaPath}" class="trend-area sales-area"></path>` : ""}
       ${showUnits && !showSales ? `<path d="${unitsAreaPath}" class="trend-area units-area"></path>` : ""}
+      ${showCompare && showSales ? `<path d="${compareSalesLinePath}" class="trend-line sales-line compare-period-line"></path>` : ""}
+      ${showCompare && showUnits ? `<path d="${compareUnitsLinePath}" class="trend-line units-line compare-period-line compare-period-units-line"></path>` : ""}
       ${showSales ? `<path d="${salesLinePath}" class="trend-line sales-line"></path>` : ""}
       ${showUnits ? `<path d="${unitsLinePath}" class="trend-line units-line"></path>` : ""}
       ${xLabelIndexes.map((index) => {
@@ -1784,6 +1834,14 @@ function renderTrendLineChart(rows) {
         const y = height - 32;
         return `<text x="${point.x.toFixed(2)}" y="${y}" class="trend-axis-label trend-x-label" text-anchor="end" transform="rotate(-35 ${point.x.toFixed(2)} ${y})">${escapeHtml(row.axisLabel || row.periodLabel)}</text>`;
       }).join("")}
+      ${showCompare ? compareRowsForAxis.map((row, index) => renderTrendPointGroup(row, compareSalesPoints[index], compareUnitsPoints[index], {
+        showSales,
+        showUnits,
+        width,
+        height,
+        pad,
+        isCompare: true
+      })).join("") : ""}
       ${rows.map((row, index) => renderTrendPointGroup(row, salesPoints[index], unitsPoints[index], {
         showSales,
         showUnits,
@@ -1793,6 +1851,22 @@ function renderTrendLineChart(rows) {
       })).join("")}
     </svg>
   `;
+}
+
+function shouldShowTrendCompareLine() {
+  return Boolean(state.trendShowCompare && hasComparisonPeriod());
+}
+
+function shouldShowProductCompareLine() {
+  return Boolean(state.compareShowCompare && hasComparisonPeriod());
+}
+
+function syncCompareLineToggle(input, checked) {
+  if (!input) return;
+  const enabled = hasComparisonPeriod();
+  input.disabled = !enabled;
+  input.checked = Boolean(checked && enabled);
+  input.closest("label")?.classList.toggle("is-disabled", !enabled);
 }
 
 function getTrendMetricMode() {
@@ -1831,16 +1905,21 @@ function renderTrendPointGroup(row, salesPoint, unitsPoint, options) {
   const anchorPoint = visiblePoints.reduce((top, point) => point.y < top.y ? point : top, visiblePoints[0]);
   const tooltip = getTrendTooltipPosition(anchorPoint.x, anchorPoint.y, options);
   const periodType = state.trendGrain === "week" ? "Week" : state.trendGrain === "month" ? "Month" : "Day";
-  const label = `${periodType} ${row.periodLabel}, sales ${formatCurrency(row.netSales)}, units ${formatNumber(row.netUnits)}`;
+  const periodLabel = options.isCompare ? `Compare ${periodType}` : periodType;
+  const compareClass = options.isCompare ? " compare-period-point-group" : "";
+  const pointClass = options.isCompare ? " compare-period-point" : "";
+  const tooltipClass = options.isCompare ? " compare-period-tooltip" : "";
+  const pointRadius = options.isCompare ? "5.5" : "4.7";
+  const label = `${periodLabel} ${row.periodLabel}, sales ${formatCurrency(row.netSales)}, units ${formatNumber(row.netUnits)}`;
 
   return `
-    <g class="trend-point-group" tabindex="0" aria-label="${escapeHtml(label)}">
-      ${options.showSales ? `<circle cx="${salesPoint.x.toFixed(2)}" cy="${salesPoint.y.toFixed(2)}" r="4.7" class="trend-point-dot trend-point-sales"></circle>` : ""}
-      ${options.showUnits ? `<circle cx="${unitsPoint.x.toFixed(2)}" cy="${unitsPoint.y.toFixed(2)}" r="4.7" class="trend-point-dot trend-point-units"></circle>` : ""}
-      <g class="trend-tooltip" transform="translate(${tooltip.x.toFixed(2)} ${tooltip.y.toFixed(2)})">
+    <g class="trend-point-group${compareClass}" tabindex="0" aria-label="${escapeHtml(label)}">
+      ${options.showSales ? `<circle cx="${salesPoint.x.toFixed(2)}" cy="${salesPoint.y.toFixed(2)}" r="${pointRadius}" class="trend-point-dot trend-point-sales${pointClass}"></circle>` : ""}
+      ${options.showUnits ? `<circle cx="${unitsPoint.x.toFixed(2)}" cy="${unitsPoint.y.toFixed(2)}" r="${pointRadius}" class="trend-point-dot trend-point-units${pointClass}"></circle>` : ""}
+      <g class="trend-tooltip${tooltipClass}" transform="translate(${tooltip.x.toFixed(2)} ${tooltip.y.toFixed(2)})">
         <rect x="0" y="0" width="${tooltip.width}" height="${tooltip.height}" rx="8" class="trend-tooltip-card"></rect>
         <rect x="0" y="0" width="5" height="${tooltip.height}" rx="2.5" class="trend-tooltip-accent"></rect>
-        <text x="14" y="20" class="trend-tooltip-label">${escapeHtml(periodType)}</text>
+        <text x="14" y="20" class="trend-tooltip-label">${escapeHtml(periodLabel)}</text>
         <text x="14" y="37" class="trend-tooltip-value">${escapeHtml(row.periodLabel)}</text>
         <text x="14" y="57" class="trend-tooltip-label">Sales</text>
         <text x="82" y="57" class="trend-tooltip-value">${escapeHtml(formatCurrency(row.netSales))}</text>
@@ -1875,11 +1954,13 @@ function renderProductCompare(records) {
 
   state.compareGrain = dom.compareGrain.value || state.compareGrain || "week";
   state.compareMetric = getCompareMetricMode();
+  syncCompareLineToggle(dom.compareCompareToggle, state.compareShowCompare);
   renderCompareProductOptions(records);
   renderCompareSelection(records);
 
   const selectedProducts = getCompareSelectedProducts(records);
-  const series = buildProductCompareSeries(records, selectedProducts);
+  const comparisonRecords = shouldShowProductCompareLine() ? getCompareTrendRecords() : [];
+  const series = buildProductCompareSeries(records, selectedProducts, comparisonRecords);
   renderProductCompareSummary(series);
 
   if (!selectedProducts.length) {
@@ -1959,28 +2040,39 @@ function getCompareSelectedProducts(records) {
   }));
 }
 
-function buildProductCompareSeries(records, products) {
+function buildProductCompareSeries(records, products, comparisonRecords = []) {
   const productRecords = new Map(products.map((product) => [product.productKey, []]));
+  const compareProductRecords = new Map(products.map((product) => [product.productKey, []]));
   for (const record of records) {
     const productKey = getProductKey(record);
     if (productRecords.has(productKey)) productRecords.get(productKey).push(record);
   }
+  for (const record of comparisonRecords) {
+    const productKey = getProductKey(record);
+    if (compareProductRecords.has(productKey)) compareProductRecords.get(productKey).push(record);
+  }
 
   const grain = state.compareGrain || "week";
   const series = products.map((product, index) => {
-    const rows = buildTrendRows(productRecords.get(product.productKey) || [], grain, dom.currentStart.value, dom.currentEnd.value);
-    const totalSales = sum(productRecords.get(product.productKey) || [], "netSales");
-    const totalUnits = sum(productRecords.get(product.productKey) || [], "netUnits");
+    const currentProductRecords = productRecords.get(product.productKey) || [];
+    const compareRecords = compareProductRecords.get(product.productKey) || [];
+    const rows = buildTrendRows(currentProductRecords, grain, dom.currentStart.value, dom.currentEnd.value);
+    const compareRows = comparisonRecords.length
+      ? buildTrendRows(compareRecords, grain, dom.compareStart.value, dom.compareEnd.value)
+      : [];
+    const totalSales = sum(currentProductRecords, "netSales");
+    const totalUnits = sum(currentProductRecords, "netUnits");
     return {
       ...product,
       color: PRODUCT_COMPARE_COLORS[index % PRODUCT_COMPARE_COLORS.length],
       rows,
+      compareRows,
       totalSales,
       totalUnits
     };
   });
 
-  return normalizeProductCompareSeries(series);
+  return normalizeProductCompareSeriesSet(series);
 }
 
 function normalizeProductCompareSeries(series) {
@@ -2015,6 +2107,22 @@ function normalizeProductCompareSeries(series) {
   });
 }
 
+function normalizeProductCompareSeriesSet(series) {
+  const current = normalizeProductCompareSeries(series.map((item) => ({
+    ...item,
+    rows: item.rows || []
+  })));
+  const comparison = normalizeProductCompareSeries(series.map((item) => ({
+    ...item,
+    rows: item.compareRows || []
+  })));
+
+  return current.map((item, index) => ({
+    ...item,
+    compareRows: comparison[index]?.rows || []
+  }));
+}
+
 function renderProductCompareSummary(series) {
   if (!dom.compareSummaryTbody) return;
   if (!series.length) {
@@ -2043,13 +2151,16 @@ function renderProductCompareLineChart(series) {
   const showUnits = metricMode !== "sales";
   const showBoth = showSales && showUnits;
   const periods = series.find((item) => item.rows.length)?.rows || [];
+  const showCompare = shouldShowProductCompareLine() && series.some((item) => item.compareRows?.length);
   const width = 930;
   const height = 420;
   const pad = { top: 34, right: showBoth ? 100 : 48, bottom: 92, left: 92 };
   const plotWidth = width - pad.left - pad.right;
   const plotHeight = height - pad.top - pad.bottom;
-  const salesValues = series.flatMap((item) => item.rows.map((row) => row.netSales));
-  const unitsValues = series.flatMap((item) => item.rows.map((row) => row.netUnits));
+  const salesValues = series.flatMap((item) => item.rows.map((row) => row.netSales)
+    .concat(showCompare ? (item.compareRows || []).slice(0, periods.length).map((row) => row.netSales) : []));
+  const unitsValues = series.flatMap((item) => item.rows.map((row) => row.netUnits)
+    .concat(showCompare ? (item.compareRows || []).slice(0, periods.length).map((row) => row.netUnits) : []));
   const salesScale = getTrendScale(salesValues);
   const unitsScale = getTrendScale(unitsValues);
   const primaryScale = showSales ? salesScale : unitsScale;
@@ -2072,6 +2183,7 @@ function renderProductCompareLineChart(series) {
           ${escapeHtml(item.sku)}
         </span>
       `).join("")}
+      ${showCompare ? `<span><i class="compare-period-swatch"></i>Compare Period</span>` : ""}
     </div>
     <svg class="trend-line-svg compare-line-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Product comparison trend">
       <rect x="0" y="0" width="${width}" height="${height}" class="trend-svg-bg"></rect>
@@ -2087,6 +2199,7 @@ function renderProductCompareLineChart(series) {
         return `<text x="${width - pad.right + 14}" y="${(y + 4).toFixed(2)}" class="trend-axis-label units-axis" text-anchor="start">${escapeHtml(formatNumber(tick))}</text>`;
       }).join("")}
       <line x1="${pad.left}" y1="${baselineY.toFixed(2)}" x2="${width - pad.right}" y2="${baselineY.toFixed(2)}" class="trend-zero-line"></line>
+      ${showCompare ? series.map((item) => renderProductCompareSeriesLines(item, { showSales, showUnits, xForIndex, yForValue, salesScale, unitsScale, rowsKey: "compareRows", isCompare: true, maxPoints: periods.length })).join("") : ""}
       ${series.map((item) => renderProductCompareSeriesLines(item, { showSales, showUnits, xForIndex, yForValue, salesScale, unitsScale })).join("")}
       ${xLabelIndexes.map((index) => {
         const period = periods[index];
@@ -2094,29 +2207,35 @@ function renderProductCompareLineChart(series) {
         const y = height - 34;
         return `<text x="${x.toFixed(2)}" y="${y}" class="trend-axis-label trend-x-label" text-anchor="end" transform="rotate(-35 ${x.toFixed(2)} ${y})">${escapeHtml(period.axisLabel || period.periodLabel)}</text>`;
       }).join("")}
+      ${showCompare ? series.map((item) => renderProductCompareSeriesPoints(item, { showSales, showUnits, xForIndex, yForValue, salesScale, unitsScale, width, height, pad, rowsKey: "compareRows", isCompare: true, maxPoints: periods.length })).join("") : ""}
       ${series.map((item) => renderProductCompareSeriesPoints(item, { showSales, showUnits, xForIndex, yForValue, salesScale, unitsScale, width, height, pad })).join("")}
     </svg>
   `;
 }
 
 function renderProductCompareSeriesLines(item, options) {
-  const salesPoints = item.rows.map((row, index) => ({
+  const rows = getProductCompareChartRows(item, options);
+  if (!rows.length) return "";
+
+  const compareClass = options.isCompare ? " compare-period-product-line" : "";
+  const salesPoints = rows.map((row, index) => ({
     x: options.xForIndex(index),
     y: options.yForValue(row.netSales, options.salesScale)
   }));
-  const unitsPoints = item.rows.map((row, index) => ({
+  const unitsPoints = rows.map((row, index) => ({
     x: options.xForIndex(index),
     y: options.yForValue(row.netUnits, options.unitsScale)
   }));
 
   return `
-    ${options.showSales ? `<path d="${buildTrendPath(salesPoints)}" class="compare-product-line compare-sales-line" style="--compare-color:${item.color}"></path>` : ""}
-    ${options.showUnits ? `<path d="${buildTrendPath(unitsPoints)}" class="compare-product-line compare-units-line" style="--compare-color:${item.color}"></path>` : ""}
+    ${options.showSales ? `<path d="${buildTrendPath(salesPoints)}" class="compare-product-line compare-sales-line${compareClass}" style="--compare-color:${item.color}"></path>` : ""}
+    ${options.showUnits ? `<path d="${buildTrendPath(unitsPoints)}" class="compare-product-line compare-units-line${compareClass}" style="--compare-color:${item.color}"></path>` : ""}
   `;
 }
 
 function renderProductCompareSeriesPoints(item, options) {
-  return item.rows.map((row, index) => {
+  const rows = getProductCompareChartRows(item, options);
+  return rows.map((row, index) => {
     const salesPoint = {
       x: options.xForIndex(index),
       y: options.yForValue(row.netSales, options.salesScale)
@@ -2129,6 +2248,12 @@ function renderProductCompareSeriesPoints(item, options) {
   }).join("");
 }
 
+function getProductCompareChartRows(item, options) {
+  const rows = item[options.rowsKey || "rows"] || [];
+  if (!options.maxPoints) return rows;
+  return rows.slice(0, options.maxPoints);
+}
+
 function renderProductComparePointGroup(product, row, salesPoint, unitsPoint, options) {
   const visiblePoints = [
     options.showSales ? salesPoint : null,
@@ -2137,20 +2262,24 @@ function renderProductComparePointGroup(product, row, salesPoint, unitsPoint, op
   const anchorPoint = visiblePoints.reduce((top, point) => point.y < top.y ? point : top, visiblePoints[0]);
   const tooltip = getProductCompareTooltipPosition(anchorPoint.x, anchorPoint.y, options);
   const periodType = state.compareGrain === "week" ? "Week" : state.compareGrain === "month" ? "Month" : "Day";
+  const periodLabel = options.isCompare ? `Compare ${periodType}` : periodType;
   const productLabel = truncateText(product.productTitle, 28);
-  const ariaLabel = `${product.productTitle}, ${periodType} ${row.periodLabel}, sales ${formatCurrency(row.netSales)}, units ${formatNumber(row.netUnits)}`;
+  const ariaLabel = `${product.productTitle}, ${periodLabel} ${row.periodLabel}, sales ${formatCurrency(row.netSales)}, units ${formatNumber(row.netUnits)}`;
+  const compareClass = options.isCompare ? " compare-period-point-group" : "";
+  const pointClass = options.isCompare ? " compare-period-product-point" : "";
+  const pointRadius = options.isCompare ? "5.5" : "4.7";
 
   return `
-    <g class="trend-point-group compare-point-group" tabindex="0" aria-label="${escapeHtml(ariaLabel)}">
-      ${options.showSales ? `<circle cx="${salesPoint.x.toFixed(2)}" cy="${salesPoint.y.toFixed(2)}" r="4.7" class="trend-point-dot compare-point-dot" style="--compare-color:${product.color}"></circle>` : ""}
-      ${options.showUnits ? `<circle cx="${unitsPoint.x.toFixed(2)}" cy="${unitsPoint.y.toFixed(2)}" r="4.7" class="trend-point-dot compare-point-dot compare-point-units" style="--compare-color:${product.color}"></circle>` : ""}
-      <g class="trend-tooltip compare-tooltip" transform="translate(${tooltip.x.toFixed(2)} ${tooltip.y.toFixed(2)})">
+    <g class="trend-point-group compare-point-group${compareClass}" tabindex="0" aria-label="${escapeHtml(ariaLabel)}">
+      ${options.showSales ? `<circle cx="${salesPoint.x.toFixed(2)}" cy="${salesPoint.y.toFixed(2)}" r="${pointRadius}" class="trend-point-dot compare-point-dot${pointClass}" style="--compare-color:${product.color}"></circle>` : ""}
+      ${options.showUnits ? `<circle cx="${unitsPoint.x.toFixed(2)}" cy="${unitsPoint.y.toFixed(2)}" r="${pointRadius}" class="trend-point-dot compare-point-dot compare-point-units${pointClass}" style="--compare-color:${product.color}"></circle>` : ""}
+      <g class="trend-tooltip compare-tooltip${options.isCompare ? " compare-period-tooltip" : ""}" transform="translate(${tooltip.x.toFixed(2)} ${tooltip.y.toFixed(2)})">
         <rect x="0" y="0" width="${tooltip.width}" height="${tooltip.height}" rx="8" class="trend-tooltip-card"></rect>
         <rect x="0" y="0" width="5" height="${tooltip.height}" rx="2.5" class="trend-tooltip-accent" style="--compare-color:${product.color}"></rect>
         <text x="14" y="20" class="trend-tooltip-label">Product</text>
         <text x="82" y="20" class="trend-tooltip-value">${escapeHtml(product.sku)}</text>
         <text x="14" y="39" class="trend-tooltip-value">${escapeHtml(productLabel)}</text>
-        <text x="14" y="59" class="trend-tooltip-label">${escapeHtml(periodType)}</text>
+        <text x="14" y="59" class="trend-tooltip-label">${escapeHtml(periodLabel)}</text>
         <text x="82" y="59" class="trend-tooltip-value">${escapeHtml(row.periodLabel)}</text>
         <text x="14" y="79" class="trend-tooltip-label">Sales</text>
         <text x="82" y="79" class="trend-tooltip-value">${escapeHtml(formatCurrency(row.netSales))}</text>
