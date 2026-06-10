@@ -858,13 +858,24 @@ select:focus {
 }
 
 .compare-period-toggle {
+  grid-template-rows: auto 36px;
   align-content: end;
+  align-items: center;
+  justify-items: center;
+}
+
+.compare-period-toggle span {
+  width: 100%;
+  text-align: center;
 }
 
 .compare-period-toggle input {
+  justify-self: center;
+  align-self: center;
   width: 18px;
   height: 18px;
   min-height: 18px;
+  margin: 0;
   accent-color: var(--green);
 }
 
@@ -1279,6 +1290,13 @@ th.numeric {
   transition: transform 120ms ease, filter 120ms ease, stroke-width 120ms ease;
 }
 
+.trend-point-hit {
+  fill: transparent;
+  stroke: transparent;
+  pointer-events: all;
+  cursor: pointer;
+}
+
 .trend-point-sales {
   fill: var(--green);
 }
@@ -1301,7 +1319,8 @@ th.numeric {
 }
 
 .trend-point-group:hover .trend-point-dot,
-.trend-point-group:focus .trend-point-dot {
+.trend-point-group:focus .trend-point-dot,
+.trend-point-group.is-active .trend-point-dot {
   filter: drop-shadow(0 0 8px rgba(255, 221, 0, 0.42));
   stroke-width: 2.6;
   transform: scale(1.36);
@@ -1368,7 +1387,8 @@ th.numeric {
 }
 
 .trend-point-group:hover .trend-tooltip,
-.trend-point-group:focus .trend-tooltip {
+.trend-point-group:focus .trend-tooltip,
+.trend-point-group.is-active .trend-tooltip {
   opacity: 1;
 }
 

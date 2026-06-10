@@ -154,6 +154,7 @@ let filterSearchTimer = null;
 let columnDrag = null;
 let clipTooltipTarget = null;
 let clipTooltipFrame = null;
+let activeTrendPoint = null;
 
 document.addEventListener("DOMContentLoaded", init);
 
@@ -306,7 +307,9 @@ function bindEvents() {
   document.addEventListener("drop", handleColumnDrop);
   document.addEventListener("dragend", handleColumnDragEnd);
   document.addEventListener("pointerover", handleTrendPointLayering);
+  document.addEventListener("pointerout", handleTrendPointDeactivation);
   document.addEventListener("focusin", handleTrendPointLayering);
+  document.addEventListener("focusout", handleTrendPointDeactivation);
   document.addEventListener("pointerover", handleClipTooltipPointerOver);
   document.addEventListener("pointerout", handleClipTooltipPointerOut);
   document.addEventListener("click", hideClipTooltip);
@@ -318,7 +321,26 @@ function bindEvents() {
 function handleTrendPointLayering(event) {
   const pointGroup = event.target instanceof Element ? event.target.closest(".trend-point-group") : null;
   if (!pointGroup || !pointGroup.parentNode) return;
-  pointGroup.parentNode.appendChild(pointGroup);
+  activateTrendPoint(pointGroup);
+  if (pointGroup.parentNode.lastElementChild !== pointGroup) {
+    pointGroup.parentNode.appendChild(pointGroup);
+  }
+}
+
+function handleTrendPointDeactivation(event) {
+  const pointGroup = event.target instanceof Element ? event.target.closest(".trend-point-group") : null;
+  if (!pointGroup) return;
+  if (event.relatedTarget instanceof Node && pointGroup.contains(event.relatedTarget)) return;
+  pointGroup.classList.remove("is-active");
+  if (activeTrendPoint === pointGroup) activeTrendPoint = null;
+}
+
+function activateTrendPoint(pointGroup) {
+  if (activeTrendPoint && activeTrendPoint !== pointGroup) {
+    activeTrendPoint.classList.remove("is-active");
+  }
+  activeTrendPoint = pointGroup;
+  pointGroup.classList.add("is-active");
 }
 
 function handleClipTooltipPointerOver(event) {
@@ -1377,6 +1399,7 @@ function normalizeRecord(cells, fieldIndex, fileName, sourceHash, rowNumber) {
 
 function renderAll() {
   hideClipTooltip();
+  activeTrendPoint = null;
   const analysisRecords = getAnalysisRecords();
   const dateSummary = getDatasetDateSummary();
   dom.dataRange.textContent = dateSummary ? `${dateSummary.min} to ${dateSummary.max}` : "No data loaded";
@@ -1911,9 +1934,13 @@ function renderTrendPointGroup(row, salesPoint, unitsPoint, options) {
   const tooltipClass = options.isCompare ? " compare-period-tooltip" : "";
   const pointRadius = options.isCompare ? "5.5" : "4.7";
   const label = `${periodLabel} ${row.periodLabel}, sales ${formatCurrency(row.netSales)}, units ${formatNumber(row.netUnits)}`;
+  const hitTargets = visiblePoints.map((point) => (
+    `<circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="14" class="trend-point-hit"></circle>`
+  )).join("");
 
   return `
     <g class="trend-point-group${compareClass}" tabindex="0" aria-label="${escapeHtml(label)}">
+      ${hitTargets}
       ${options.showSales ? `<circle cx="${salesPoint.x.toFixed(2)}" cy="${salesPoint.y.toFixed(2)}" r="${pointRadius}" class="trend-point-dot trend-point-sales${pointClass}"></circle>` : ""}
       ${options.showUnits ? `<circle cx="${unitsPoint.x.toFixed(2)}" cy="${unitsPoint.y.toFixed(2)}" r="${pointRadius}" class="trend-point-dot trend-point-units${pointClass}"></circle>` : ""}
       <g class="trend-tooltip${tooltipClass}" transform="translate(${tooltip.x.toFixed(2)} ${tooltip.y.toFixed(2)})">
@@ -2268,9 +2295,13 @@ function renderProductComparePointGroup(product, row, salesPoint, unitsPoint, op
   const compareClass = options.isCompare ? " compare-period-point-group" : "";
   const pointClass = options.isCompare ? " compare-period-product-point" : "";
   const pointRadius = options.isCompare ? "5.5" : "4.7";
+  const hitTargets = visiblePoints.map((point) => (
+    `<circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="14" class="trend-point-hit"></circle>`
+  )).join("");
 
   return `
     <g class="trend-point-group compare-point-group${compareClass}" tabindex="0" aria-label="${escapeHtml(ariaLabel)}">
+      ${hitTargets}
       ${options.showSales ? `<circle cx="${salesPoint.x.toFixed(2)}" cy="${salesPoint.y.toFixed(2)}" r="${pointRadius}" class="trend-point-dot compare-point-dot${pointClass}" style="--compare-color:${product.color}"></circle>` : ""}
       ${options.showUnits ? `<circle cx="${unitsPoint.x.toFixed(2)}" cy="${unitsPoint.y.toFixed(2)}" r="${pointRadius}" class="trend-point-dot compare-point-dot compare-point-units${pointClass}" style="--compare-color:${product.color}"></circle>` : ""}
       <g class="trend-tooltip compare-tooltip${options.isCompare ? " compare-period-tooltip" : ""}" transform="translate(${tooltip.x.toFixed(2)} ${tooltip.y.toFixed(2)})">
