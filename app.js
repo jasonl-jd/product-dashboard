@@ -23,6 +23,7 @@ const PRICE_STATUS_LABELS = ["Full Price", "Markdown"];
 const STATUS_DISPLAY_ORDER = ["Full Price", "Markdown", "Return"];
 const EXCLUDED_ANALYSIS_PRODUCT_TITLES = new Set(["[refund adjustment]", "refund adjustment"]);
 const UNASSIGNED_ATTRIBUTE_VALUES = new Set(["false"]);
+const ARRAY_APPEND_CHUNK_SIZE = 5000;
 
 const DIMENSIONS = [
   { key: "shippingProvince", label: "Shipping Province", headers: ["Shipping Province"] },
@@ -843,7 +844,7 @@ async function loadRepositoryData({ forceRefresh = false } = {}) {
     }
 
     const addedRecords = parsed.records.map(hydrateRecord);
-    records.push(...addedRecords);
+    appendItems(records, addedRecords);
 
     fileMetas.push({
       hash: sourceHash,
@@ -863,7 +864,7 @@ async function loadRepositoryData({ forceRefresh = false } = {}) {
   state.records = records;
   state.analysisRecords = filterAnalysisRecords(records);
   state.files = fileMetas;
-  state.rowKeys = new Set(records.map((record) => record.rowKey));
+  state.rowKeys = buildRowKeySet(records);
   pruneParsedFileCache(cacheKeys);
 }
 
@@ -1898,8 +1899,13 @@ function getTrendMetricMode() {
 }
 
 function getTrendScale(values) {
-  let min = Math.min(0, ...values);
-  let max = Math.max(0, ...values);
+  let min = 0;
+  let max = 0;
+  for (const value of values) {
+    const numeric = Number(value) || 0;
+    if (numeric < min) min = numeric;
+    if (numeric > max) max = numeric;
+  }
   if (min === max) {
     min -= 1;
     max += 1;
@@ -2839,7 +2845,7 @@ function renderPivotTable(rows) {
   const visibleRows = Number.isFinite(limit) ? rows.slice(0, limit) : rows;
   const columns = getTableColumns("pivot");
   const hiddenCount = getPivotNameRows().filter((row) => getActivePivotNameExclusions().has(row.value)).length;
-  const maxAbsNetSales = Math.max(...visibleRows.map((row) => Math.abs(Number(row.netSales) || 0)), 1);
+  const maxAbsNetSales = getMaxAbsValue(visibleRows, "netSales");
 
   dom.pivotHeading.textContent = hiddenCount
     ? `Performance by ${dimension.label} (${numberFormat.format(rows.length)} shown)`
@@ -4448,6 +4454,32 @@ function isReferenceErrorValue(value) {
 
 function isUnassignedAttributeValue(value) {
   return UNASSIGNED_ATTRIBUTE_VALUES.has(cleanText(value).toLocaleLowerCase());
+}
+
+function appendItems(target, items) {
+  for (let index = 0; index < items.length; index += ARRAY_APPEND_CHUNK_SIZE) {
+    const end = Math.min(index + ARRAY_APPEND_CHUNK_SIZE, items.length);
+    for (let itemIndex = index; itemIndex < end; itemIndex += 1) {
+      target.push(items[itemIndex]);
+    }
+  }
+}
+
+function buildRowKeySet(records) {
+  const keys = new Set();
+  for (const record of records) {
+    keys.add(record.rowKey);
+  }
+  return keys;
+}
+
+function getMaxAbsValue(rows, key) {
+  let max = 1;
+  for (const row of rows) {
+    const value = Math.abs(Number(row[key]) || 0);
+    if (value > max) max = value;
+  }
+  return max;
 }
 
 function hydrateRecord(record) {
