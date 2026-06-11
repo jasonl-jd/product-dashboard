@@ -7,7 +7,7 @@ window.addEventListener("unhandledrejection", (event) => reportGlobalError(event
 const DATA_MANIFEST_URL = "data/manifest.json";
 const DATA_CACHE_DB = "product-performance-dashboard";
 const DATA_CACHE_STORE = "parsed-files";
-const DATA_CACHE_VERSION = "parsed-csv-v6";
+const DATA_CACHE_VERSION = "parsed-csv-v7";
 const BLANK = "(blank)";
 const MAX_FILTER_OPTIONS = 180;
 const MAX_PIVOT_NAME_FILTER_OPTIONS = 360;
@@ -1405,7 +1405,7 @@ function normalizeRecord(cells, fieldIndex, fileName, sourceHash, rowNumber) {
   for (const dimension of DIMENSIONS) {
     record[dimension.key] = cleanDimension(cells[fieldIndex[dimension.key]]);
   }
-  record.status = normalizeStatus(record.status);
+  record.status = normalizeStatus(record.status, record);
   record.region = getRegion(record.shippingProvince);
 
   record.orderKey = getOrderKey(record);
@@ -4610,16 +4610,26 @@ function hydrateRecord(record) {
   const hydrated = {
     ...record,
     ...Object.fromEntries(DIMENSIONS.map((dimension) => [dimension.key, cleanDimension(record[dimension.key])])),
-    status: normalizeStatus(record.status)
+    status: normalizeStatus(record.status, record)
   };
   hydrated.region = getRegion(hydrated.shippingProvince);
   hydrated.orderKey = getOrderKey(hydrated);
   return hydrated;
 }
 
-function normalizeStatus(value) {
+function normalizeStatus(value, record = null) {
   const status = cleanDimension(value);
+  if (isReturnStatus(status) || isReturnRecord(record)) return "Return";
   return status.toUpperCase() === "#VALUE" || status.toUpperCase() === "#VALUE!" ? "Full Price" : status;
+}
+
+function isReturnStatus(status) {
+  return cleanText(status).toLocaleLowerCase() === "return";
+}
+
+function isReturnRecord(record) {
+  if (!record) return false;
+  return (Number(record.netUnits) || 0) < 0 || (Number(record.netSales) || 0) < 0;
 }
 
 function getOrderKey(record) {
