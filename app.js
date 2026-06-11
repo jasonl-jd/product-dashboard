@@ -114,6 +114,7 @@ const state = {
   files: [],
   rowKeys: new Set(),
   filters: Object.fromEntries(DIMENSIONS.map((dimension) => [dimension.key, new Set()])),
+  filterExclusions: Object.fromEntries(DIMENSIONS.map((dimension) => [dimension.key, new Set()])),
   filterSearch: {},
   filterOpen: {},
   pivotNameSearch: "",
@@ -1691,10 +1692,12 @@ function renderFilters() {
 
   dom.filters.innerHTML = DIMENSIONS.map((dimension, index) => {
     const selected = state.filters[dimension.key];
+    const excluded = state.filterExclusions[dimension.key];
     removeHiddenFilterSelections(selected);
+    removeHiddenFilterSelections(excluded);
     const search = state.filterSearch[dimension.key] || "";
-    const selectedLabel = selected.size ? numberFormat.format(selected.size) : "All";
-    const isOpen = state.filterOpen[dimension.key] ?? (index < 5 || selected.size > 0);
+    const selectedLabel = getFilterCountLabel(dimension.key);
+    const isOpen = state.filterOpen[dimension.key] ?? (index < 5 || selected.size > 0 || excluded.size > 0);
 
     return `
       <details class="filter-group" data-filter-group="${dimension.key}" ${isOpen ? "open" : ""}>
@@ -1714,6 +1717,7 @@ function renderFilters() {
 
 function renderFilterOptionMarkup(dimension) {
   const selected = state.filters[dimension.key];
+  const excluded = state.filterExclusions[dimension.key];
   const search = state.filterSearch[dimension.key] || "";
   const counts = getFilterCounts(dimension.key);
   const options = Array.from(counts.entries())
@@ -1724,9 +1728,11 @@ function renderFilterOptionMarkup(dimension) {
   const optionMarkup = options.map(([value, count]) => {
     const id = `${dimension.key}-${hashString(value)}`;
     const hasRelevantData = count > 0;
+    const checked = selected.size > 0 ? selected.has(value) : !excluded.has(value);
+    const isExcluded = !checked && selected.size === 0 && excluded.has(value);
     return `
-      <label class="filter-option ${hasRelevantData ? "" : "is-empty"}" for="${id}" title="${escapeHtml(value)}">
-        <input id="${id}" type="checkbox" data-filter-option="${dimension.key}" value="${escapeHtml(value)}" ${selected.has(value) ? "checked" : ""}>
+      <label class="filter-option ${hasRelevantData ? "" : "is-empty"} ${isExcluded ? "is-excluded" : ""}" for="${id}" title="${escapeHtml(value)}">
+        <input id="${id}" type="checkbox" data-filter-option="${dimension.key}" value="${escapeHtml(value)}" ${checked ? "checked" : ""}>
         <span>${escapeHtml(value)}</span>
         <em>${numberFormat.format(count)}</em>
       </label>
@@ -1752,9 +1758,7 @@ function getFilterCounts(key) {
 function recordMatchesOtherFilters(record, excludeKey) {
   return DIMENSIONS.every((dimension) => {
     if (dimension.key === excludeKey) return true;
-    const selected = state.filters[dimension.key];
-    if (!selected || selected.size === 0) return true;
-    return selected.has(record[dimension.key] || BLANK);
+    return isDimensionValueAllowed(dimension.key, record[dimension.key] || BLANK);
   });
 }
 
@@ -1787,12 +1791,26 @@ function handleFilterChange(event) {
   if (!checkbox) return;
   const key = checkbox.dataset.filterOption;
   if (!state.filters[key]) state.filters[key] = new Set();
+  if (!state.filterExclusions[key]) state.filterExclusions[key] = new Set();
   state.filterOpen[key] = true;
-  if (checkbox.checked) {
-    state.filters[key].add(checkbox.value);
+
+  const selected = state.filters[key];
+  const excluded = state.filterExclusions[key];
+
+  if (selected.size > 0) {
+    if (checkbox.checked) {
+      selected.add(checkbox.value);
+    } else {
+      selected.delete(checkbox.value);
+    }
   } else {
-    state.filters[key].delete(checkbox.value);
+    if (checkbox.checked) {
+      excluded.delete(checkbox.value);
+    } else {
+      excluded.add(checkbox.value);
+    }
   }
+
   updateFilterCountLabel(key);
   renderAll();
 }
@@ -1802,6 +1820,7 @@ function handleFilterClick(event) {
   if (!button) return;
   const key = button.dataset.filterClear;
   state.filters[key].clear();
+  state.filterExclusions[key]?.clear();
   state.filterOpen[key] = true;
   updateFilterCountLabel(key);
   renderAll();
@@ -1810,6 +1829,7 @@ function handleFilterClick(event) {
 function clearAllFilters() {
   for (const dimension of DIMENSIONS) {
     state.filters[dimension.key].clear();
+    state.filterExclusions[dimension.key]?.clear();
     state.pivotNameExclusions[dimension.key]?.clear();
   }
   state.pivotNameSearch = "";
@@ -1836,8 +1856,15 @@ function updateFilterCountLabel(key) {
   const group = dom.filters.querySelector(`[data-filter-group="${key}"]`);
   const label = group?.querySelector(".filter-count");
   if (!label) return;
+  label.textContent = getFilterCountLabel(key);
+}
+
+function getFilterCountLabel(key) {
   const selected = state.filters[key];
-  label.textContent = selected?.size ? numberFormat.format(selected.size) : "All";
+  const excluded = state.filterExclusions[key];
+  if (selected?.size) return numberFormat.format(selected.size);
+  if (excluded?.size) return `All - ${numberFormat.format(excluded.size)}`;
+  return "All";
 }
 
 function handlePeriodInputChange() {
@@ -3937,11 +3964,7 @@ function buildTradeRegionalTopProducts(records, comparisonRecords = [], hasCompa
 }
 
 function getTradeRegions() {
-  const selected = state.filters.region;
-  if (selected?.size) {
-    return REGION_DEFS.filter((region) => selected.has(region.label));
-  }
-  return REGION_DEFS;
+  return REGION_DEFS.filter((region) => isDimensionValueAllowed("region", region.label));
 }
 
 function groupRecordsByProduct(records) {
@@ -4126,10 +4149,15 @@ function normalizeExcludedProductTitle(value) {
 
 function applyDimensionFilters(records) {
   return records.filter((record) => DIMENSIONS.every((dimension) => {
-    const selected = state.filters[dimension.key];
-    if (!selected || selected.size === 0) return true;
-    return selected.has(record[dimension.key] || BLANK);
+    return isDimensionValueAllowed(dimension.key, record[dimension.key] || BLANK);
   }));
+}
+
+function isDimensionValueAllowed(key, value) {
+  const selected = state.filters[key];
+  const excluded = state.filterExclusions[key];
+  if (selected?.size) return selected.has(value);
+  return !excluded?.has(value);
 }
 
 function inDateRange(record, start, end) {

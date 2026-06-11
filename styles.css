@@ -399,6 +399,17 @@ select:focus {
   opacity: 0.48;
 }
 
+.filter-option.is-excluded {
+  color: var(--muted);
+  opacity: 0.72;
+}
+
+.filter-option.is-excluded span {
+  text-decoration: line-through;
+  text-decoration-color: rgba(255, 221, 0, 0.72);
+  text-decoration-thickness: 2px;
+}
+
 .filter-option.is-empty input {
   filter: grayscale(1);
 }
