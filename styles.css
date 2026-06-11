@@ -976,13 +976,15 @@ td {
 th {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 8;
   background: var(--green);
+  background-clip: padding-box;
   color: var(--black);
   font-size: 11px;
   font-weight: 860;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  box-shadow: 0 1px 0 var(--black), 0 7px 12px rgba(0, 0, 0, 0.28);
 }
 
 th button {
@@ -1058,10 +1060,55 @@ th.numeric {
   max-width: 320px;
 }
 
+.pivot-table {
+  width: max-content;
+  min-width: 0;
+  table-layout: auto;
+}
+
 .pivot-table .col-value {
-  min-width: 180px;
-  width: 28%;
-  max-width: 380px;
+  width: 1%;
+  min-width: 12ch;
+  max-width: min(34ch, 28vw);
+  white-space: nowrap;
+}
+
+.pivot-table .col-value .clip {
+  max-width: min(34ch, 28vw);
+}
+
+.pivot-table .col-status {
+  width: 12ch;
+  min-width: 10ch;
+  max-width: 16ch;
+  white-space: nowrap;
+}
+
+.pivot-table .col-status .clip {
+  max-width: 16ch;
+}
+
+.pivot-table .numeric {
+  white-space: nowrap;
+}
+
+.pivot-table .col-netSales,
+.pivot-table .col-compareSales,
+.pivot-table .col-change {
+  width: 12ch;
+  min-width: 11ch;
+}
+
+.pivot-table .col-netUnits {
+  width: 10ch;
+  min-width: 9ch;
+}
+
+.pivot-table .col-salesShare,
+.pivot-table .col-unitsShare,
+.pivot-table .col-changePct {
+  width: 8ch;
+  min-width: 8ch;
 }
 
 .pivot-table .pivot-bar-cell {
