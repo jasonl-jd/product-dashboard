@@ -115,6 +115,7 @@ const state = {
   rowKeys: new Set(),
   filters: Object.fromEntries(DIMENSIONS.map((dimension) => [dimension.key, new Set()])),
   filterExclusions: Object.fromEntries(DIMENSIONS.map((dimension) => [dimension.key, new Set()])),
+  filterAllSelected: Object.fromEntries(DIMENSIONS.map((dimension) => [dimension.key, false])),
   filterSearch: {},
   filterOpen: {},
   pivotNameSearch: "",
@@ -1693,11 +1694,12 @@ function renderFilters() {
   dom.filters.innerHTML = DIMENSIONS.map((dimension, index) => {
     const selected = state.filters[dimension.key];
     const excluded = state.filterExclusions[dimension.key];
+    const allSelected = Boolean(state.filterAllSelected[dimension.key]);
     removeHiddenFilterSelections(selected);
     removeHiddenFilterSelections(excluded);
     const search = state.filterSearch[dimension.key] || "";
     const selectedLabel = getFilterCountLabel(dimension.key);
-    const isOpen = state.filterOpen[dimension.key] ?? (index < 5 || selected.size > 0 || excluded.size > 0);
+    const isOpen = state.filterOpen[dimension.key] ?? (index < 5 || selected.size > 0 || excluded.size > 0 || allSelected);
 
     return `
       <details class="filter-group" data-filter-group="${dimension.key}" ${isOpen ? "open" : ""}>
@@ -1707,7 +1709,7 @@ function renderFilters() {
         </summary>
         <div class="filter-body">
           <input type="search" data-filter-search="${dimension.key}" value="${escapeHtml(search)}" placeholder="Search">
-          <button class="text-button" data-filter-clear="${dimension.key}" type="button">All</button>
+          <button class="text-button" data-filter-toggle-all="${dimension.key}" type="button">${escapeHtml(getFilterToggleButtonLabel(dimension.key))}</button>
           <div class="filter-options" data-filter-options="${dimension.key}">${renderFilterOptionMarkup(dimension)}</div>
         </div>
       </details>
@@ -1718,6 +1720,7 @@ function renderFilters() {
 function renderFilterOptionMarkup(dimension) {
   const selected = state.filters[dimension.key];
   const excluded = state.filterExclusions[dimension.key];
+  const allSelected = Boolean(state.filterAllSelected[dimension.key]);
   const search = state.filterSearch[dimension.key] || "";
   const counts = getFilterCounts(dimension.key);
   const options = Array.from(counts.entries())
@@ -1728,8 +1731,8 @@ function renderFilterOptionMarkup(dimension) {
   const optionMarkup = options.map(([value, count]) => {
     const id = `${dimension.key}-${hashString(value)}`;
     const hasRelevantData = count > 0;
-    const checked = selected.size > 0 ? selected.has(value) : !excluded.has(value);
-    const isExcluded = !checked && selected.size === 0 && excluded.has(value);
+    const checked = selected.size > 0 ? selected.has(value) : allSelected && !excluded.has(value);
+    const isExcluded = allSelected && !checked && excluded.has(value);
     return `
       <label class="filter-option ${hasRelevantData ? "" : "is-empty"} ${isExcluded ? "is-excluded" : ""}" for="${id}" title="${escapeHtml(value)}">
         <input id="${id}" type="checkbox" data-filter-option="${dimension.key}" value="${escapeHtml(value)}" ${checked ? "checked" : ""}>
@@ -1796,6 +1799,7 @@ function handleFilterChange(event) {
 
   const selected = state.filters[key];
   const excluded = state.filterExclusions[key];
+  const allSelected = Boolean(state.filterAllSelected[key]);
 
   if (selected.size > 0) {
     if (checkbox.checked) {
@@ -1803,12 +1807,14 @@ function handleFilterChange(event) {
     } else {
       selected.delete(checkbox.value);
     }
-  } else {
+  } else if (allSelected) {
     if (checkbox.checked) {
       excluded.delete(checkbox.value);
     } else {
       excluded.add(checkbox.value);
     }
+  } else if (checkbox.checked) {
+    selected.add(checkbox.value);
   }
 
   updateFilterCountLabel(key);
@@ -1816,9 +1822,10 @@ function handleFilterChange(event) {
 }
 
 function handleFilterClick(event) {
-  const button = event.target.closest("[data-filter-clear]");
+  const button = event.target.closest("[data-filter-toggle-all]");
   if (!button) return;
-  const key = button.dataset.filterClear;
+  const key = button.dataset.filterToggleAll;
+  state.filterAllSelected[key] = !state.filterAllSelected[key];
   state.filters[key].clear();
   state.filterExclusions[key]?.clear();
   state.filterOpen[key] = true;
@@ -1830,6 +1837,7 @@ function clearAllFilters() {
   for (const dimension of DIMENSIONS) {
     state.filters[dimension.key].clear();
     state.filterExclusions[dimension.key]?.clear();
+    state.filterAllSelected[dimension.key] = false;
     state.pivotNameExclusions[dimension.key]?.clear();
   }
   state.pivotNameSearch = "";
@@ -1863,8 +1871,14 @@ function getFilterCountLabel(key) {
   const selected = state.filters[key];
   const excluded = state.filterExclusions[key];
   if (selected?.size) return numberFormat.format(selected.size);
-  if (excluded?.size) return `All - ${numberFormat.format(excluded.size)}`;
-  return "All";
+  if (state.filterAllSelected[key]) {
+    return excluded?.size ? `All - ${numberFormat.format(excluded.size)}` : "All";
+  }
+  return "Any";
+}
+
+function getFilterToggleButtonLabel(key) {
+  return state.filterAllSelected[key] ? "Deselect All" : "Select All";
 }
 
 function handlePeriodInputChange() {
@@ -4157,7 +4171,8 @@ function isDimensionValueAllowed(key, value) {
   const selected = state.filters[key];
   const excluded = state.filterExclusions[key];
   if (selected?.size) return selected.has(value);
-  return !excluded?.has(value);
+  if (state.filterAllSelected[key]) return !excluded?.has(value);
+  return true;
 }
 
 function inDateRange(record, start, end) {
