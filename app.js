@@ -134,6 +134,11 @@ const state = {
   trendGrain: "week",
   trendMetric: "sales",
   trendShowCompare: true,
+  trendSelection: {
+    active: false,
+    previousPeriods: null,
+    label: ""
+  },
   compareProductQuery: "",
   compareProducts: [],
   compareGrain: "week",
@@ -165,6 +170,8 @@ let columnDrag = null;
 let clipTooltipTarget = null;
 let clipTooltipFrame = null;
 let activeTrendPoint = null;
+let trendRangeDrag = null;
+let suppressTrendPointClick = false;
 
 document.addEventListener("DOMContentLoaded", init);
 
@@ -216,6 +223,7 @@ function collectDom() {
     trendProductInput: document.querySelector("#trend-product-input"),
     trendProductOptions: document.querySelector("#trend-product-options"),
     clearTrendProduct: document.querySelector("#clear-trend-product"),
+    clearTrendSelection: document.querySelector("#clear-trend-selection"),
     trendChart: document.querySelector("#trend-chart"),
     tradeWeekLabel: document.querySelector("#trade-week-label"),
     tradeAnalysis: document.querySelector("#trade-analysis"),
@@ -283,6 +291,7 @@ function bindEvents() {
   dom.trendCompareToggle?.addEventListener("change", handleTrendCompareToggleChange);
   dom.trendProductInput.addEventListener("input", handleTrendProductInput);
   dom.clearTrendProduct.addEventListener("click", clearTrendProduct);
+  dom.clearTrendSelection?.addEventListener("click", resetTrendSelection);
   dom.exportTradeBrandCsv.addEventListener("click", exportTradeBrandCsv);
   dom.exportTradeRegionalCsv.addEventListener("click", exportTradeRegionalCsv);
   dom.compareGrain.addEventListener("change", handleCompareGrainChange);
@@ -318,6 +327,12 @@ function bindEvents() {
   document.addEventListener("dragover", handleColumnDragOver);
   document.addEventListener("drop", handleColumnDrop);
   document.addEventListener("dragend", handleColumnDragEnd);
+  document.addEventListener("pointerdown", handleTrendRangePointerDown);
+  document.addEventListener("pointermove", handleTrendRangePointerMove);
+  document.addEventListener("pointerup", handleTrendRangePointerUp);
+  document.addEventListener("pointercancel", cancelTrendRangeDrag);
+  document.addEventListener("click", handleTrendPointClick);
+  document.addEventListener("keydown", handleTrendPointKeydown);
   document.addEventListener("pointerover", handleTrendPointLayering);
   document.addEventListener("pointerout", handleTrendPointDeactivation);
   document.addEventListener("focusin", handleTrendPointLayering);
@@ -353,6 +368,196 @@ function activateTrendPoint(pointGroup) {
   }
   activeTrendPoint = pointGroup;
   pointGroup.classList.add("is-active");
+}
+
+function handleTrendPointClick(event) {
+  if (suppressTrendPointClick) {
+    suppressTrendPointClick = false;
+    return;
+  }
+  const pointGroup = getTrendDrilldownPoint(event.target);
+  if (!pointGroup) return;
+  event.preventDefault();
+  applyTrendPointPeriod(pointGroup);
+}
+
+function handleTrendPointKeydown(event) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const pointGroup = getTrendDrilldownPoint(event.target);
+  if (!pointGroup) return;
+  event.preventDefault();
+  applyTrendPointPeriod(pointGroup);
+}
+
+function getTrendDrilldownPoint(target) {
+  return target instanceof Element
+    ? target.closest(".trend-point-group[data-period-start][data-period-end]")
+    : null;
+}
+
+function applyTrendPointPeriod(pointGroup) {
+  const start = pointGroup.dataset.periodStart || "";
+  const end = pointGroup.dataset.periodEnd || start;
+  if (!start || !end) return;
+
+  applyTrendSelectionRange(start, end, pointGroup.dataset.periodLabel || `${start} to ${end}`);
+}
+
+function handleTrendRangePointerDown(event) {
+  if (event.button !== 0) return;
+  const svg = event.target instanceof Element
+    ? event.target.closest(".trend-line-svg[data-trend-selectable='true']")
+    : null;
+  if (!svg) return;
+
+  const index = getTrendIndexFromPointer(svg, event);
+  if (!Number.isFinite(index)) return;
+
+  trendRangeDrag = {
+    svg,
+    startIndex: index,
+    currentIndex: index,
+    startClientX: event.clientX,
+    moved: false
+  };
+}
+
+function handleTrendRangePointerMove(event) {
+  if (!trendRangeDrag) return;
+  const index = getTrendIndexFromPointer(trendRangeDrag.svg, event);
+  if (!Number.isFinite(index)) return;
+  const movedEnough = Math.abs(event.clientX - trendRangeDrag.startClientX) > 5 || index !== trendRangeDrag.startIndex;
+  trendRangeDrag.currentIndex = index;
+  trendRangeDrag.moved = trendRangeDrag.moved || movedEnough;
+  if (!trendRangeDrag.moved) return;
+  event.preventDefault();
+  renderTrendRangeSelection(trendRangeDrag.svg, trendRangeDrag.startIndex, trendRangeDrag.currentIndex);
+}
+
+function handleTrendRangePointerUp(event) {
+  if (!trendRangeDrag) return;
+  const drag = trendRangeDrag;
+  trendRangeDrag = null;
+  clearTrendRangeSelection(drag.svg);
+
+  if (!drag.moved) return;
+  event.preventDefault();
+  suppressTrendPointClick = true;
+  window.setTimeout(() => {
+    suppressTrendPointClick = false;
+  }, 100);
+  applyTrendIndexRange(drag.svg, drag.startIndex, drag.currentIndex);
+}
+
+function cancelTrendRangeDrag() {
+  if (trendRangeDrag?.svg) clearTrendRangeSelection(trendRangeDrag.svg);
+  trendRangeDrag = null;
+}
+
+function getTrendIndexFromPointer(svg, event) {
+  const count = Number(svg.dataset.trendPointCount) || 0;
+  if (!count) return NaN;
+  const rect = svg.getBoundingClientRect();
+  const viewWidth = Number(svg.viewBox.baseVal.width) || rect.width;
+  const x = (event.clientX - rect.left) / rect.width * viewWidth;
+  const left = Number(svg.dataset.plotLeft) || 0;
+  const right = Number(svg.dataset.plotRight) || viewWidth;
+  const clampedX = Math.min(Math.max(x, left), right);
+  if (count === 1) return 0;
+  return Math.min(count - 1, Math.max(0, Math.round((clampedX - left) / (right - left) * (count - 1))));
+}
+
+function trendIndexToX(svg, index) {
+  const count = Number(svg.dataset.trendPointCount) || 0;
+  const left = Number(svg.dataset.plotLeft) || 0;
+  const right = Number(svg.dataset.plotRight) || left;
+  if (count <= 1) return left + (right - left) / 2;
+  return left + (index / (count - 1)) * (right - left);
+}
+
+function renderTrendRangeSelection(svg, startIndex, endIndex) {
+  const overlay = svg.querySelector(".trend-range-selection");
+  if (!overlay) return;
+  const minIndex = Math.min(startIndex, endIndex);
+  const maxIndex = Math.max(startIndex, endIndex);
+  const x1 = trendIndexToX(svg, minIndex);
+  const x2 = trendIndexToX(svg, maxIndex);
+  const pointPadding = Math.max(10, (Number(svg.dataset.plotRight) - Number(svg.dataset.plotLeft)) / Math.max(1, (Number(svg.dataset.trendPointCount) || 1) - 1) / 2);
+  const left = Number(svg.dataset.plotLeft) || 0;
+  const right = Number(svg.dataset.plotRight) || x2;
+  const x = Math.max(left, Math.min(x1, x2) - pointPadding);
+  const width = Math.min(right, Math.max(x1, x2) + pointPadding) - x;
+  overlay.setAttribute("x", x.toFixed(2));
+  overlay.setAttribute("width", Math.max(2, width).toFixed(2));
+  overlay.removeAttribute("hidden");
+}
+
+function clearTrendRangeSelection(svg) {
+  svg?.querySelector(".trend-range-selection")?.setAttribute("hidden", "");
+}
+
+function applyTrendIndexRange(svg, startIndex, endIndex) {
+  const minIndex = Math.min(startIndex, endIndex);
+  const maxIndex = Math.max(startIndex, endIndex);
+  const groups = Array.from(svg.querySelectorAll(".trend-point-group[data-period-role='current'][data-trend-index]"));
+  const byIndex = new Map(groups.map((group) => [Number(group.dataset.trendIndex), group]));
+  const first = byIndex.get(minIndex);
+  const last = byIndex.get(maxIndex);
+  if (!first || !last) return;
+
+  const start = first.dataset.periodStart || "";
+  const end = last.dataset.periodEnd || start;
+  if (!start || !end) return;
+
+  const firstLabel = first.dataset.periodLabel || start;
+  const lastLabel = last.dataset.periodLabel || end;
+  const label = minIndex === maxIndex ? firstLabel : `${firstLabel} to ${lastLabel}`;
+  applyTrendSelectionRange(start, end, label);
+}
+
+function applyTrendSelectionRange(start, end, label) {
+  rememberTrendSelectionBase();
+  dom.currentStart.value = start;
+  dom.currentEnd.value = end;
+  state.dateTouched = true;
+  setPreviousPeriod(false, { preserveTrendSelection: true });
+  syncAppliedPeriodsFromInputs();
+  state.trendSelection.active = true;
+  state.trendSelection.label = label;
+  updateTrendSelectionButton();
+  renderAll();
+  setStatus(`Applied ${label} to the dashboard. Use Reset Selection to return to the previous period.`);
+}
+
+function rememberTrendSelectionBase() {
+  if (state.trendSelection.active && state.trendSelection.previousPeriods) return;
+  state.trendSelection.previousPeriods = { ...getAppliedPeriods() };
+}
+
+function resetTrendSelection() {
+  const previous = state.trendSelection.previousPeriods;
+  if (!previous) return;
+  dom.currentStart.value = previous.currentStart;
+  dom.currentEnd.value = previous.currentEnd;
+  dom.compareStart.value = previous.compareStart;
+  dom.compareEnd.value = previous.compareEnd;
+  clearTrendSelectionState();
+  syncAppliedPeriodsFromInputs();
+  renderAll();
+  setStatus("Trend selection cleared. Previous period restored.");
+}
+
+function clearTrendSelectionState() {
+  state.trendSelection.active = false;
+  state.trendSelection.previousPeriods = null;
+  state.trendSelection.label = "";
+  updateTrendSelectionButton();
+}
+
+function updateTrendSelectionButton() {
+  if (!dom.clearTrendSelection) return;
+  dom.clearTrendSelection.disabled = !state.trendSelection.active;
+  dom.clearTrendSelection.classList.toggle("primary", state.trendSelection.active);
 }
 
 function handleClipTooltipPointerOver(event) {
@@ -1449,6 +1654,7 @@ function renderAll() {
   renderFiles();
   renderProductTable(state.productRows);
   renderRegionalTopProducts(state.regionalProductRows);
+  updateTrendSelectionButton();
 }
 
 function renderKpis(current, comparison, hasComparison) {
@@ -1636,6 +1842,7 @@ function updateFilterCountLabel(key) {
 
 function handlePeriodInputChange() {
   state.dateTouched = true;
+  clearTrendSelectionState();
   markPeriodsDirty();
 }
 
@@ -1665,6 +1872,7 @@ function swapPeriodInputs() {
     return;
   }
 
+  clearTrendSelectionState();
   dom.currentStart.value = periods.compareStart;
   dom.currentEnd.value = periods.compareEnd;
   dom.compareStart.value = periods.currentStart;
@@ -1951,8 +2159,9 @@ function renderTrendLineChart(rows, compareRows = []) {
       ${showUnits ? `<span><i class="legend-swatch units"></i>Units</span>` : ""}
       ${showCompare ? `<span><i class="legend-swatch compare-period"></i>Compare Period</span>` : ""}
     </div>
-    <svg class="trend-line-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Trend line">
+    <svg class="trend-line-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Trend line" data-trend-selectable="true" data-plot-left="${pad.left}" data-plot-right="${width - pad.right}" data-plot-top="${pad.top}" data-plot-bottom="${height - pad.bottom}" data-trend-point-count="${rows.length}">
       <rect x="0" y="0" width="${width}" height="${height}" class="trend-svg-bg"></rect>
+      <rect x="${pad.left}" y="${pad.top}" width="0" height="${plotHeight}" class="trend-range-selection" hidden></rect>
       ${primaryTicks.map((tick) => {
         const y = yForValue(tick, primaryScale);
         return `
@@ -1983,14 +2192,16 @@ function renderTrendLineChart(rows, compareRows = []) {
         width,
         height,
         pad,
-        isCompare: true
+        isCompare: true,
+        trendIndex: index
       })).join("") : ""}
       ${rows.map((row, index) => renderTrendPointGroup(row, salesPoints[index], unitsPoints[index], {
         showSales,
         showUnits,
         width,
         height,
-        pad
+        pad,
+        trendIndex: index
       })).join("")}
     </svg>
   `;
@@ -2059,12 +2270,15 @@ function renderTrendPointGroup(row, salesPoint, unitsPoint, options) {
   const tooltipClass = options.isCompare ? " compare-period-tooltip" : "";
   const pointRadius = options.isCompare ? "5.5" : "4.7";
   const label = `${periodLabel} ${row.periodLabel}, sales ${formatCurrency(row.netSales)}, units ${formatNumber(row.netUnits)}`;
+  const drilldownStart = row.filterStart || row.periodStart;
+  const drilldownEnd = row.filterEnd || row.periodEnd || drilldownStart;
+  const trendIndexAttr = Number.isFinite(options.trendIndex) ? ` data-trend-index="${options.trendIndex}"` : "";
   const hitTargets = visiblePoints.map((point) => (
     `<circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="14" class="trend-point-hit"></circle>`
   )).join("");
 
   return `
-    <g class="trend-point-group${compareClass}" tabindex="0" aria-label="${escapeHtml(label)}">
+    <g class="trend-point-group${compareClass}" tabindex="0" role="button" aria-label="${escapeHtml(`${label}. Click to filter dashboard to this period.`)}" data-period-start="${escapeHtml(drilldownStart)}" data-period-end="${escapeHtml(drilldownEnd)}" data-period-label="${escapeHtml(row.periodLabel)}" data-period-role="${options.isCompare ? "compare" : "current"}"${trendIndexAttr}>
       ${hitTargets}
       ${options.showSales ? `<circle cx="${salesPoint.x.toFixed(2)}" cy="${salesPoint.y.toFixed(2)}" r="${pointRadius}" class="trend-point-dot trend-point-sales${pointClass}"></circle>` : ""}
       ${options.showUnits ? `<circle cx="${unitsPoint.x.toFixed(2)}" cy="${unitsPoint.y.toFixed(2)}" r="${pointRadius}" class="trend-point-dot trend-point-units${pointClass}"></circle>` : ""}
@@ -2564,6 +2778,8 @@ function buildTrendRows(records, grain = "week", rangeStart = "", rangeEnd = "")
       map.set(bucket.start, {
         periodStart: bucket.start,
         periodEnd: bucket.end,
+        filterStart: bucket.filterStart || bucket.start,
+        filterEnd: bucket.filterEnd || bucket.end,
         periodLabel: bucket.label,
         axisLabel: bucket.axisLabel,
         netSales: 0,
@@ -2604,6 +2820,8 @@ function getTrendBucketForDateKey(key, grain, rangeStart = "", rangeEnd = "") {
     return {
       start: key,
       end: key,
+      filterStart: key,
+      filterEnd: key,
       label,
       axisLabel: label
     };
@@ -2617,6 +2835,8 @@ function getTrendBucketForDateKey(key, grain, rangeStart = "", rangeEnd = "") {
     return {
       start,
       end,
+      filterStart: display.start,
+      filterEnd: display.end,
       label: display.start === start && display.end === end
         ? formatTrendMonthLabel(start)
         : formatTrendPeriodLabel(display.start, display.end),
@@ -2633,6 +2853,8 @@ function getTrendBucketForDateKey(key, grain, rangeStart = "", rangeEnd = "") {
   return {
     start: bucketStart,
     end: bucketEnd,
+    filterStart: display.start,
+    filterEnd: display.end,
     label: formatTrendPeriodLabel(display.start, display.end),
     axisLabel: formatTrendDateKey(display.start)
   };
@@ -3944,6 +4166,7 @@ function getLatestUploadedWeekRange(maxDateKey) {
 function setAllDates() {
   const summary = getDatasetDateSummary();
   if (!summary) return;
+  clearTrendSelectionState();
   state.dateTouched = true;
   dom.currentStart.value = summary.min;
   dom.currentEnd.value = summary.max;
@@ -3951,8 +4174,9 @@ function setAllDates() {
   markPeriodsDirty("All dates selected. Click Apply Periods to refresh the dashboard.");
 }
 
-function setPreviousPeriod(shouldRender = true) {
+function setPreviousPeriod(shouldRender = true, options = {}) {
   if (!dom.currentStart.value || !dom.currentEnd.value) return;
+  if (!options.preserveTrendSelection) clearTrendSelectionState();
   const currentStart = dateFromKey(dom.currentStart.value);
   const currentEnd = dateFromKey(dom.currentEnd.value);
   const days = Math.max(1, Math.round((currentEnd - currentStart) / 86400000) + 1);

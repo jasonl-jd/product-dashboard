@@ -846,7 +846,7 @@ select:focus {
 
 .trend-controls {
   display: grid;
-  grid-template-columns: 112px 120px 82px minmax(220px, 320px) auto auto;
+  grid-template-columns: 112px 120px 82px minmax(220px, 320px) auto auto auto;
   gap: 8px;
   align-items: end;
 }
@@ -1237,8 +1237,21 @@ th.numeric {
   overflow: visible;
 }
 
+.trend-line-svg[data-trend-selectable="true"] {
+  cursor: crosshair;
+  user-select: none;
+  touch-action: none;
+}
+
 .trend-svg-bg {
   fill: transparent;
+}
+
+.trend-range-selection {
+  fill: rgba(255, 221, 0, 0.16);
+  stroke: rgba(255, 221, 0, 0.78);
+  stroke-width: 1.4;
+  pointer-events: none;
 }
 
 .trend-grid-line {
@@ -1299,6 +1312,10 @@ th.numeric {
   transform-box: fill-box;
   transform-origin: center;
   transition: transform 120ms ease, filter 120ms ease, stroke-width 120ms ease;
+}
+
+.trend-point-group {
+  cursor: pointer;
 }
 
 .trend-point-hit {
