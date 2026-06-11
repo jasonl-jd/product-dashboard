@@ -85,8 +85,12 @@
       "name": "2025 Week 18"
     },
     {
-      "path": "data/11051-JDSF---Weekly-Style-Sales-wk 1-9 2025.csv",
-      "name": "2025 Week 1-9"
+      "path": "data/11051-JDSF---Weekly-Style-Sales-wk 1-4 2025.csv",
+      "name": "2025 Week 1-4"
+    },
+    {
+      "path": "data/11051-JDSF---Weekly-Style-Sales-wk 5-9 2025.csv",
+      "name": "2025 Week 5-9"
     },
     {
       "path": "data/11051-JDSF---Weekly-Style-Sales-wk 10-13 2025.csv",
