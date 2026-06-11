@@ -7,7 +7,7 @@ window.addEventListener("unhandledrejection", (event) => reportGlobalError(event
 const DATA_MANIFEST_URL = "data/manifest.json";
 const DATA_CACHE_DB = "product-performance-dashboard";
 const DATA_CACHE_STORE = "parsed-files";
-const DATA_CACHE_VERSION = "parsed-csv-v7";
+const DATA_CACHE_VERSION = "parsed-csv-v8";
 const BLANK = "(blank)";
 const MAX_FILTER_OPTIONS = 180;
 const MAX_PIVOT_NAME_FILTER_OPTIONS = 360;
@@ -55,8 +55,10 @@ const FIELD_DEFS = [
   { key: "productTitle", label: "Product Title", headers: ["Product Title", "Product"] },
   { key: "orderId", label: "Order ID", headers: ["Order ID", "Order"] },
   { key: "date", label: "Date", headers: ["Date", "Order Date"] },
+  { key: "compareAtPrice", label: "Compare At price", headers: ["Compare At price", "Compare At Price", "Compare At"] },
   { key: "netSales", label: "Net Sales", headers: ["Net Sales"] },
   { key: "netUnits", label: "Net Quantity", headers: ["Net Quantity", "Net Units", "Net Units Sold"] },
+  { key: "isReturn", label: "Is Return", headers: ["Is_Return", "Is Return"] },
   ...DIMENSIONS
 ];
 
@@ -1394,8 +1396,10 @@ function normalizeRecord(cells, fieldIndex, fileName, sourceHash, rowNumber) {
     orderId: cleanText(cells[fieldIndex.orderId]),
     dateTime: dateInfo.dateTime,
     dateKey: dateInfo.dateKey,
+    compareAtPrice: fieldIndex.compareAtPrice === undefined ? null : toNumber(cells[fieldIndex.compareAtPrice]),
     netSales: toNumber(cells[fieldIndex.netSales]),
     netUnits: toNumber(cells[fieldIndex.netUnits]),
+    isReturn: fieldIndex.isReturn === undefined ? "" : cleanText(cells[fieldIndex.isReturn]),
     sourceFile: fileName,
     sourceHash,
     sourceRow: rowNumber,
@@ -4620,6 +4624,7 @@ function hydrateRecord(record) {
 function normalizeStatus(value, record = null) {
   const status = cleanDimension(value);
   if (isReturnStatus(status) || isReturnRecord(record)) return "Return";
+  if (hasCompareAtPrice(record)) return Number(record.compareAtPrice) > 0 ? "Markdown" : "Full Price";
   return status.toUpperCase() === "#VALUE" || status.toUpperCase() === "#VALUE!" ? "Full Price" : status;
 }
 
@@ -4629,7 +4634,16 @@ function isReturnStatus(status) {
 
 function isReturnRecord(record) {
   if (!record) return false;
-  return (Number(record.netUnits) || 0) < 0 || (Number(record.netSales) || 0) < 0;
+  return isTruthyFlag(record.isReturn) || (Number(record.netUnits) || 0) < 0 || (Number(record.netSales) || 0) < 0;
+}
+
+function hasCompareAtPrice(record) {
+  return record && record.compareAtPrice !== null && record.compareAtPrice !== undefined && Number.isFinite(Number(record.compareAtPrice));
+}
+
+function isTruthyFlag(value) {
+  const text = cleanText(value).toLocaleLowerCase();
+  return text === "yes" || text === "true" || text === "1";
 }
 
 function getOrderKey(record) {
