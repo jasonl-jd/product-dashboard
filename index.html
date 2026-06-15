@@ -545,8 +545,15 @@
             <span class="panel-kicker">Products</span>
             <h2 id="product-heading">Product Results</h2>
           </div>
-          <button id="export-product-csv" class="button compact" type="button">Export CSV</button>
+          <div class="product-side-actions">
+            <button id="export-product-csv" class="button compact" type="button">Export CSV</button>
+            <button id="toggle-product-results" class="button compact" type="button" aria-expanded="true">Collapse</button>
+          </div>
         </div>
+        <button id="show-product-results" class="product-rail-button" type="button" hidden>
+          <span>Products</span>
+          <strong>Show</strong>
+        </button>
         <div class="table-scroll product-scroll">
           <table class="product-table">
             <thead id="product-thead"></thead>

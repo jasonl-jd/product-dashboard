@@ -8,6 +8,7 @@ const DATA_MANIFEST_URL = "data/manifest.json";
 const DATA_CACHE_DB = "product-performance-dashboard";
 const DATA_CACHE_STORE = "parsed-files";
 const DATA_CACHE_VERSION = "parsed-csv-v10";
+const PRODUCT_PANEL_COLLAPSED_STORAGE_KEY = "product-dashboard:product-panel-collapsed";
 const BLANK = "(blank)";
 const MAX_FILTER_OPTIONS = 180;
 const MAX_PIVOT_NAME_FILTER_OPTIONS = 360;
@@ -173,6 +174,7 @@ const state = {
     pivot: new Set(),
     product: new Set()
   },
+  productPanelCollapsed: false,
   dateTouched: false,
   loading: false
 };
@@ -196,6 +198,7 @@ document.addEventListener("DOMContentLoaded", init);
 async function init() {
   collectDom();
   initializeColumnOrders();
+  initializeProductPanelState();
   populateDimensionSelect();
   renderColumnSettings();
   bindEvents();
@@ -281,6 +284,10 @@ function collectDom() {
     productHeading: document.querySelector("#product-heading"),
     productThead: document.querySelector("#product-thead"),
     productTbody: document.querySelector("#product-tbody"),
+    productSide: document.querySelector(".product-side"),
+    appShell: document.querySelector(".app-shell"),
+    toggleProductResults: document.querySelector("#toggle-product-results"),
+    showProductResults: document.querySelector("#show-product-results"),
     pivotColumnList: document.querySelector("#pivot-column-list"),
     productColumnList: document.querySelector("#product-column-list"),
     regionalProductRegion: document.querySelector("#regional-product-region"),
@@ -308,6 +315,8 @@ function bindEvents() {
   dom.exportPivotTableCsv.addEventListener("click", exportPivotCsv);
   dom.exportProductCsv.addEventListener("click", exportProductCsv);
   dom.exportRegionalCsv.addEventListener("click", exportRegionalTopProductsCsv);
+  dom.toggleProductResults?.addEventListener("click", () => setProductPanelCollapsed(true));
+  dom.showProductResults?.addEventListener("click", () => setProductPanelCollapsed(false));
   dom.clearFilters.addEventListener("click", clearAllFilters);
   dom.expandFilters?.addEventListener("click", () => setAllFilterGroupsOpen(true));
   dom.collapseFilters?.addEventListener("click", () => setAllFilterGroupsOpen(false));
@@ -899,6 +908,30 @@ function clearColumnDragState() {
   clearColumnDropTargets();
   document.querySelectorAll(".column-order-row.dragging").forEach((row) => row.classList.remove("dragging"));
   columnDrag = null;
+}
+
+function initializeProductPanelState() {
+  state.productPanelCollapsed = localStorage.getItem(PRODUCT_PANEL_COLLAPSED_STORAGE_KEY) === "true";
+  applyProductPanelState();
+}
+
+function setProductPanelCollapsed(collapsed) {
+  state.productPanelCollapsed = Boolean(collapsed);
+  try {
+    localStorage.setItem(PRODUCT_PANEL_COLLAPSED_STORAGE_KEY, String(state.productPanelCollapsed));
+  } catch (error) {
+    console.warn("Could not save product panel state.", error);
+  }
+  applyProductPanelState();
+}
+
+function applyProductPanelState() {
+  const collapsed = Boolean(state.productPanelCollapsed);
+  dom.appShell?.classList.toggle("product-results-collapsed", collapsed);
+  dom.productSide?.classList.toggle("is-collapsed", collapsed);
+  dom.toggleProductResults?.setAttribute("aria-expanded", String(!collapsed));
+  if (dom.toggleProductResults) dom.toggleProductResults.textContent = collapsed ? "Show" : "Collapse";
+  if (dom.showProductResults) dom.showProductResults.hidden = !collapsed;
 }
 
 function updateSortHeaderStates() {
