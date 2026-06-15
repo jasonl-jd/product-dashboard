@@ -7,7 +7,7 @@ window.addEventListener("unhandledrejection", (event) => reportGlobalError(event
 const DATA_MANIFEST_URL = "data/manifest.json";
 const DATA_CACHE_DB = "product-performance-dashboard";
 const DATA_CACHE_STORE = "parsed-files";
-const DATA_CACHE_VERSION = "parsed-csv-v8";
+const DATA_CACHE_VERSION = "parsed-csv-v9";
 const BLANK = "(blank)";
 const MAX_FILTER_OPTIONS = 180;
 const MAX_PIVOT_NAME_FILTER_OPTIONS = 360;
@@ -19,6 +19,7 @@ const TREND_METRIC_OPTIONS = new Set(["sales", "units", "both"]);
 const TREND_MONTH_ABBRS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const PRODUCT_COMPARE_LIMIT = 4;
 const PRODUCT_COMPARE_COLORS = ["#ffdd00", "#4fb6ff", "#d71920", "#f7f7f2"];
+const PRODUCT_COMPARE_REGION_COLORS = ["#ffdd00", "#4fb6ff", "#d71920", "#9bdc6a", "#c792ea", "#f7b500", "#ff7ab6", "#7ee0d2", "#a0c4ff", "#ffa552", "#82e0aa", "#f7f7f2"];
 const PRICE_STATUS_LABELS = ["Full Price", "Markdown"];
 const STATUS_DISPLAY_ORDER = ["Full Price", "Markdown", "Return"];
 const EXCLUDED_ANALYSIS_PRODUCT_TITLES = new Set(["[refund adjustment]", "refund adjustment"]);
@@ -53,6 +54,7 @@ const PROVINCE_TO_REGION = new Map(
 const FIELD_DEFS = [
   { key: "sku", label: "SKU", headers: ["SKU"] },
   { key: "productTitle", label: "Product Title", headers: ["Product Title", "Product"] },
+  { key: "franchise", label: "Franchise", headers: ["Franchise"] },
   { key: "orderId", label: "Order ID", headers: ["Order ID", "Order"] },
   { key: "date", label: "Date", headers: ["Date", "Order Date"] },
   { key: "compareAtPrice", label: "Compare At price", headers: ["Compare At price", "Compare At Price", "Compare At"] },
@@ -129,6 +131,14 @@ const state = {
   statusTotals: null,
   productRows: [],
   regionalProductRows: [],
+  regionalProductRegion: "all",
+  regionalCurrentRecords: [],
+  regionalComparisonRecords: [],
+  regionalHasComparison: false,
+  regionalBrandRows: [],
+  regionalBrandTotals: null,
+  regionalFranchiseRows: [],
+  regionalFranchiseTotals: null,
   tradeBrandRows: [],
   tradeRegionalRows: [],
   tradePeriods: null,
@@ -146,6 +156,8 @@ const state = {
   compareGrain: "week",
   compareMetric: "sales",
   compareShowCompare: true,
+  compareShowAllRegions: true,
+  compareRegions: new Set(),
   periods: {
     currentStart: "",
     currentEnd: "",
@@ -156,6 +168,10 @@ const state = {
   columnOrders: {
     pivot: [],
     product: []
+  },
+  hiddenColumns: {
+    pivot: new Set(),
+    product: new Set()
   },
   dateTouched: false,
   loading: false
@@ -240,6 +256,9 @@ function collectDom() {
     compareCompareToggle: document.querySelector("#compare-compare-toggle"),
     compareProductInput: document.querySelector("#compare-product-input"),
     compareProductOptions: document.querySelector("#compare-product-options"),
+    compareRegionAll: document.querySelector("#compare-region-all"),
+    compareRegionOptions: document.querySelector("#compare-region-options"),
+    compareRegionSummary: document.querySelector("#compare-region-summary"),
     addCompareProduct: document.querySelector("#add-compare-product"),
     clearCompareProducts: document.querySelector("#clear-compare-products"),
     compareSelection: document.querySelector("#compare-selection"),
@@ -264,8 +283,11 @@ function collectDom() {
     productTbody: document.querySelector("#product-tbody"),
     pivotColumnList: document.querySelector("#pivot-column-list"),
     productColumnList: document.querySelector("#product-column-list"),
+    regionalProductRegion: document.querySelector("#regional-product-region"),
     regionalProductSort: document.querySelector("#regional-product-sort"),
     regionalProductsTbody: document.querySelector("#regional-products-tbody"),
+    regionalBrandTbody: document.querySelector("#regional-brand-tbody"),
+    regionalFranchiseTbody: document.querySelector("#regional-franchise-tbody"),
     viewTabs: document.querySelector(".view-tabs")
   });
 }
@@ -280,6 +302,7 @@ function bindEvents() {
   dom.sortSelect.addEventListener("change", renderAll);
   dom.sortDir.addEventListener("change", renderAll);
   dom.rowLimit.addEventListener("change", renderAll);
+  dom.regionalProductRegion?.addEventListener("change", handleRegionalProductRegionChange);
   dom.regionalProductSort.addEventListener("change", renderAll);
   dom.exportCsv.addEventListener("click", exportPivotCsv);
   dom.exportPivotTableCsv.addEventListener("click", exportPivotCsv);
@@ -301,6 +324,7 @@ function bindEvents() {
   dom.compareCompareToggle?.addEventListener("change", handleCompareToggleChange);
   dom.compareProductInput.addEventListener("input", handleCompareProductInput);
   dom.compareProductInput.addEventListener("keydown", handleCompareProductKeydown);
+  dom.compareRegionOptions?.addEventListener("change", handleCompareRegionChange);
   dom.addCompareProduct.addEventListener("click", addCompareProductFromInput);
   dom.clearCompareProducts.addEventListener("click", clearCompareProducts);
   dom.compareSelection.addEventListener("click", handleCompareSelectionClick);
@@ -323,6 +347,7 @@ function bindEvents() {
   document.addEventListener("click", handleSettingsTabClick);
   document.addEventListener("click", handleTableSortClick);
   document.addEventListener("click", handleColumnOrderClick);
+  document.addEventListener("change", handleColumnVisibilityChange);
   document.addEventListener("click", handleCollapseToggle);
   document.addEventListener("click", handlePivotNameFilterOutsideClick);
   document.addEventListener("dragstart", handleColumnDragStart);
@@ -801,7 +826,19 @@ function handleColumnOrderClick(event) {
   }
 }
 
+function handleColumnVisibilityChange(event) {
+  const checkbox = event.target.closest("[data-column-visible]");
+  if (!checkbox) return;
+  const table = checkbox.dataset.columnTable;
+  const key = checkbox.dataset.columnVisible;
+  setColumnVisible(table, key, checkbox.checked);
+}
+
 function handleColumnDragStart(event) {
+  if (event.target instanceof Element && event.target.closest(".column-visible-toggle")) {
+    event.preventDefault();
+    return;
+  }
   const row = event.target.closest(".column-order-row");
   if (!row) return;
 
@@ -892,6 +929,8 @@ function populateDimensionSelect() {
 function initializeColumnOrders() {
   state.columnOrders.pivot = loadColumnOrder("pivot");
   state.columnOrders.product = loadColumnOrder("product");
+  state.hiddenColumns.pivot = loadHiddenColumns("pivot");
+  state.hiddenColumns.product = loadHiddenColumns("product");
 }
 
 function loadColumnOrder(table) {
@@ -917,6 +956,40 @@ function columnOrderStorageKey(table) {
   return `product-dashboard:${table}-columns`;
 }
 
+function loadHiddenColumns(table) {
+  const defaults = DEFAULT_COLUMN_ORDERS[table] || [];
+  const validKeys = new Set(defaults);
+  try {
+    const stored = JSON.parse(localStorage.getItem(hiddenColumnsStorageKey(table)) || "[]");
+    if (Array.isArray(stored)) {
+      return normalizeHiddenColumns(table, new Set(stored.filter((key) => validKeys.has(key))));
+    }
+  } catch (error) {
+    console.warn(`Could not load ${table} hidden columns.`, error);
+  }
+  return new Set();
+}
+
+function saveHiddenColumns(table) {
+  try {
+    localStorage.setItem(hiddenColumnsStorageKey(table), JSON.stringify(Array.from(state.hiddenColumns[table] || [])));
+  } catch (error) {
+    console.warn(`Could not save ${table} hidden columns.`, error);
+  }
+}
+
+function hiddenColumnsStorageKey(table) {
+  return `product-dashboard:${table}-hidden-columns`;
+}
+
+function normalizeHiddenColumns(table, hidden) {
+  const defaults = DEFAULT_COLUMN_ORDERS[table] || [];
+  const validKeys = new Set(defaults);
+  const normalized = new Set(Array.from(hidden || []).filter((key) => validKeys.has(key)));
+  if (normalized.size >= defaults.length) return new Set();
+  return normalized;
+}
+
 function normalizeColumnOrder(table, order) {
   const defaults = DEFAULT_COLUMN_ORDERS[table] || [];
   const validKeys = new Set(defaults);
@@ -937,6 +1010,16 @@ function normalizeColumnOrder(table, order) {
 }
 
 function getTableColumns(table) {
+  const defs = COLUMN_DEFS_BY_TABLE[table] || [];
+  const byKey = new Map(defs.map((column) => [column.key, column]));
+  const order = normalizeColumnOrder(table, state.columnOrders[table] || []);
+  state.columnOrders[table] = order;
+  const hidden = normalizeHiddenColumns(table, state.hiddenColumns[table] || new Set());
+  state.hiddenColumns[table] = hidden;
+  return order.map((key) => byKey.get(key)).filter((column) => column && !hidden.has(column.key));
+}
+
+function getOrderedColumnDefs(table) {
   const defs = COLUMN_DEFS_BY_TABLE[table] || [];
   const byKey = new Map(defs.map((column) => [column.key, column]));
   const order = normalizeColumnOrder(table, state.columnOrders[table] || []);
@@ -981,7 +1064,32 @@ function reorderColumn(table, sourceKey, targetKey, position) {
 function resetColumnOrder(table) {
   if (!DEFAULT_COLUMN_ORDERS[table]) return;
   state.columnOrders[table] = [...DEFAULT_COLUMN_ORDERS[table]];
+  state.hiddenColumns[table] = new Set();
   saveColumnOrder(table);
+  saveHiddenColumns(table);
+  renderColumnSettings();
+  renderPivotOutputs();
+  renderProductTable(state.productRows);
+}
+
+function setColumnVisible(table, key, visible) {
+  if (!DEFAULT_COLUMN_ORDERS[table]?.includes(key)) return;
+  if (!state.hiddenColumns[table]) state.hiddenColumns[table] = new Set();
+
+  if (visible) {
+    state.hiddenColumns[table].delete(key);
+  } else {
+    const visibleCount = DEFAULT_COLUMN_ORDERS[table].filter((columnKey) => !state.hiddenColumns[table].has(columnKey)).length;
+    if (visibleCount <= 1) {
+      renderColumnSettings();
+      setStatus("At least one column must stay visible.", "error");
+      return;
+    }
+    state.hiddenColumns[table].add(key);
+  }
+
+  state.hiddenColumns[table] = normalizeHiddenColumns(table, state.hiddenColumns[table]);
+  saveHiddenColumns(table);
   renderColumnSettings();
   renderPivotOutputs();
   renderProductTable(state.productRows);
@@ -994,12 +1102,17 @@ function renderColumnSettings() {
 
 function renderColumnOrderList(table, target) {
   if (!target) return;
-  const columns = getTableColumns(table);
+  const columns = getOrderedColumnDefs(table);
+  const hidden = state.hiddenColumns[table] || new Set();
   target.dataset.columnTable = table;
   target.innerHTML = columns.map((column, index) => `
-    <div class="column-order-row" draggable="true" data-column-table="${table}" data-column-key="${column.key}" style="--column-index:${index}">
+    <div class="column-order-row ${hidden.has(column.key) ? "is-hidden-column" : ""}" draggable="true" data-column-table="${table}" data-column-key="${column.key}" style="--column-index:${index}">
       <span class="column-drag-handle" aria-hidden="true"></span>
       <span class="column-order-name">${escapeHtml(column.label)}</span>
+      <label class="column-visible-toggle">
+        <input type="checkbox" data-column-table="${table}" data-column-visible="${column.key}" ${hidden.has(column.key) ? "" : "checked"}>
+        <span>Show</span>
+      </label>
     </div>
   `).join("");
 }
@@ -1600,6 +1713,7 @@ function normalizeRecord(cells, fieldIndex, fileName, sourceHash, rowNumber) {
   const record = {
     sku: cleanText(cells[fieldIndex.sku]),
     productTitle: cleanText(cells[fieldIndex.productTitle]),
+    franchise: fieldIndex.franchise === undefined ? BLANK : cleanDimension(cells[fieldIndex.franchise]),
     orderId: cleanText(cells[fieldIndex.orderId]),
     dateTime: dateInfo.dateTime,
     dateKey: dateInfo.dateKey,
@@ -1651,11 +1765,15 @@ function renderAll() {
   state.pivotRows = buildPivot(current, comparison, hasComparison);
   state.productRows = buildProductResults(current, comparison, hasComparison);
   state.regionalProductRows = buildRegionalTopProducts(current, comparison, hasComparison);
+  state.regionalCurrentRecords = current;
+  state.regionalComparisonRecords = comparison;
+  state.regionalHasComparison = hasComparison;
   renderStatusSplitTable(state.statusRows, state.statusTotals);
   renderPivotOutputs();
   renderFiles();
   renderProductTable(state.productRows);
-  renderRegionalTopProducts(state.regionalProductRows);
+  renderRegionalTopProducts(getVisibleRegionalTopProducts());
+  renderRegionalBreakdownTables();
   updateTrendSelectionButton();
 }
 
@@ -2031,6 +2149,11 @@ function handleCompareToggleChange() {
   renderProductCompare(getCurrentTrendRecords());
 }
 
+function handleCompareRegionChange() {
+  syncCompareRegionSettingsFromInputs();
+  renderProductCompare(getCurrentTrendRecords());
+}
+
 function addCompareProductFromInput() {
   const records = getCurrentTrendRecords();
   const product = resolveCompareProductSelection(state.compareProductQuery, records);
@@ -2361,26 +2484,34 @@ function renderProductCompare(records) {
 
   state.compareGrain = dom.compareGrain.value || state.compareGrain || "week";
   state.compareMetric = getCompareMetricMode();
+  syncCompareRegionSettingsFromInputs();
+  updateCompareRegionSummary();
   syncCompareLineToggle(dom.compareCompareToggle, state.compareShowCompare);
   renderCompareProductOptions(records);
   renderCompareSelection(records);
 
   const selectedProducts = getCompareSelectedProducts(records);
   const comparisonRecords = shouldShowProductCompareLine() ? getCompareTrendRecords() : [];
-  const series = buildProductCompareSeries(records, selectedProducts, comparisonRecords);
-  renderProductCompareSummary(series);
+  const summarySeries = buildProductCompareSeries(records, selectedProducts, comparisonRecords);
+  const chartSeries = buildProductCompareChartSeries(records, selectedProducts, comparisonRecords, summarySeries);
+  renderProductCompareSummary(summarySeries);
 
   if (!selectedProducts.length) {
     dom.compareChart.innerHTML = `<div class="empty-state">No products selected</div>`;
     return;
   }
 
-  if (!series.some((item) => item.rows.length)) {
-    dom.compareChart.innerHTML = `<div class="empty-state">No comparison results for the selected period and filters</div>`;
+  if (!chartSeries.length) {
+    dom.compareChart.innerHTML = `<div class="empty-state">Select All Regions Combined or at least one region line</div>`;
     return;
   }
 
-  dom.compareChart.innerHTML = renderProductCompareLineChart(series);
+  if (!chartSeries.some((item) => item.rows.length)) {
+    dom.compareChart.innerHTML = `<div class="empty-state">No comparison results for the selected period, products, and region lines</div>`;
+    return;
+  }
+
+  dom.compareChart.innerHTML = renderProductCompareLineChart(chartSeries);
 }
 
 function getCompareMetricMode() {
@@ -2481,6 +2612,106 @@ function buildProductCompareSeries(records, products, comparisonRecords = []) {
   });
 
   return normalizeProductCompareSeriesSet(series);
+}
+
+function buildProductCompareChartSeries(records, products, comparisonRecords, aggregateSeries) {
+  const settings = getCompareRegionSettings();
+  if (!settings.regions.length) {
+    return settings.showAllRegions ? aggregateSeries : [];
+  }
+
+  const productRecords = new Map(products.map((product) => [product.productKey, []]));
+  const compareProductRecords = new Map(products.map((product) => [product.productKey, []]));
+  for (const record of records) {
+    const productKey = getProductKey(record);
+    if (productRecords.has(productKey)) productRecords.get(productKey).push(record);
+  }
+  for (const record of comparisonRecords || []) {
+    const productKey = getProductKey(record);
+    if (compareProductRecords.has(productKey)) compareProductRecords.get(productKey).push(record);
+  }
+
+  const grain = state.compareGrain || "week";
+  const periods = getAppliedPeriods();
+  const aggregateByProduct = new Map(aggregateSeries.map((item) => [item.productKey, item]));
+  const series = [];
+  let lineIndex = 0;
+
+  products.forEach((product, productIndex) => {
+    const allCurrentRecords = productRecords.get(product.productKey) || [];
+    const allCompareRecords = compareProductRecords.get(product.productKey) || [];
+
+    if (settings.showAllRegions) {
+      const aggregate = aggregateByProduct.get(product.productKey);
+      if (aggregate) {
+        series.push({
+          ...aggregate,
+          color: PRODUCT_COMPARE_COLORS[productIndex % PRODUCT_COMPARE_COLORS.length],
+          isAllRegions: true,
+          regionLabel: "All Regions",
+          legendLabel: `${aggregate.sku} | All Regions`,
+          legendTitle: `${aggregate.optionLabel} | All Regions`
+        });
+      }
+    }
+
+    settings.regions.forEach((region) => {
+      const currentRegionRecords = allCurrentRecords.filter((record) => record.region === region);
+      const compareRegionRecords = allCompareRecords.filter((record) => record.region === region);
+      const rows = buildTrendRows(currentRegionRecords, grain, periods.currentStart, periods.currentEnd);
+      const compareRows = comparisonRecords.length
+        ? buildTrendRows(compareRegionRecords, grain, periods.compareStart, periods.compareEnd)
+        : [];
+      if (!rows.length && !compareRows.length) return;
+
+      series.push({
+        ...product,
+        color: PRODUCT_COMPARE_REGION_COLORS[lineIndex % PRODUCT_COMPARE_REGION_COLORS.length],
+        rows,
+        compareRows,
+        totalSales: sum(currentRegionRecords, "netSales"),
+        totalUnits: sum(currentRegionRecords, "netUnits"),
+        isAllRegions: false,
+        regionLabel: region,
+        legendLabel: `${product.sku} | ${region}`,
+        legendTitle: `${product.optionLabel} | ${region}`
+      });
+      lineIndex += 1;
+    });
+  });
+
+  return normalizeProductCompareSeriesSet(series);
+}
+
+function syncCompareRegionSettingsFromInputs() {
+  state.compareShowAllRegions = dom.compareRegionAll?.checked !== false;
+  state.compareRegions = new Set(
+    Array.from(dom.compareRegionOptions?.querySelectorAll("[data-compare-region]:checked") || [])
+      .map((input) => input.dataset.compareRegion)
+      .filter((region) => REGION_DEFS.some((item) => item.label === region))
+  );
+}
+
+function getCompareRegionSettings() {
+  return {
+    showAllRegions: Boolean(state.compareShowAllRegions),
+    regions: Array.from(state.compareRegions || [])
+  };
+}
+
+function updateCompareRegionSummary() {
+  if (!dom.compareRegionSummary) return;
+  const settings = getCompareRegionSettings();
+  const count = settings.regions.length;
+  if (settings.showAllRegions && count) {
+    dom.compareRegionSummary.textContent = `All + ${numberFormat.format(count)} region${count === 1 ? "" : "s"}`;
+  } else if (settings.showAllRegions) {
+    dom.compareRegionSummary.textContent = "All Regions Combined";
+  } else if (count) {
+    dom.compareRegionSummary.textContent = `${numberFormat.format(count)} region${count === 1 ? "" : "s"}`;
+  } else {
+    dom.compareRegionSummary.textContent = "No lines selected";
+  }
 }
 
 function normalizeProductCompareSeries(series) {
@@ -2586,9 +2817,9 @@ function renderProductCompareLineChart(series) {
   return `
     <div class="compare-legend" aria-hidden="true">
       ${series.map((item) => `
-        <span title="${escapeHtml(item.optionLabel)}">
-          <i style="--compare-color:${item.color}"></i>
-          ${escapeHtml(item.sku)}
+        <span class="${item.isAllRegions ? "all-region-legend-item" : ""}" title="${escapeHtml(item.legendTitle || item.optionLabel)}">
+          <i class="${item.isAllRegions ? "all-region-swatch" : ""}" style="--compare-color:${item.color}"></i>
+          ${escapeHtml(item.legendLabel || item.sku)}
         </span>
       `).join("")}
       ${showCompare ? `<span><i class="compare-period-swatch"></i>Compare Period</span>` : ""}
@@ -2626,6 +2857,7 @@ function renderProductCompareSeriesLines(item, options) {
   if (!rows.length) return "";
 
   const compareClass = options.isCompare ? " compare-period-product-line" : "";
+  const regionClass = item.isAllRegions ? " compare-all-regions-line" : item.regionLabel ? " compare-region-line" : "";
   const salesPoints = rows.map((row, index) => ({
     x: options.xForIndex(index),
     y: options.yForValue(row.netSales, options.salesScale)
@@ -2636,8 +2868,8 @@ function renderProductCompareSeriesLines(item, options) {
   }));
 
   return `
-    ${options.showSales ? `<path d="${buildTrendPath(salesPoints)}" class="compare-product-line compare-sales-line${compareClass}" style="--compare-color:${item.color}"></path>` : ""}
-    ${options.showUnits ? `<path d="${buildTrendPath(unitsPoints)}" class="compare-product-line compare-units-line${compareClass}" style="--compare-color:${item.color}"></path>` : ""}
+    ${options.showSales ? `<path d="${buildTrendPath(salesPoints)}" class="compare-product-line compare-sales-line${compareClass}${regionClass}" style="--compare-color:${item.color}"></path>` : ""}
+    ${options.showUnits ? `<path d="${buildTrendPath(unitsPoints)}" class="compare-product-line compare-units-line${compareClass}${regionClass}" style="--compare-color:${item.color}"></path>` : ""}
   `;
 }
 
@@ -2672,7 +2904,8 @@ function renderProductComparePointGroup(product, row, salesPoint, unitsPoint, op
   const periodType = state.compareGrain === "week" ? "Week" : state.compareGrain === "month" ? "Month" : "Day";
   const periodLabel = options.isCompare ? `Compare ${periodType}` : periodType;
   const productLabel = truncateText(product.productTitle, 28);
-  const ariaLabel = `${product.productTitle}, ${periodLabel} ${row.periodLabel}, sales ${formatCurrency(row.netSales)}, units ${formatNumber(row.netUnits)}`;
+  const regionLabel = product.regionLabel || "All Regions";
+  const ariaLabel = `${product.productTitle}, ${regionLabel}, ${periodLabel} ${row.periodLabel}, sales ${formatCurrency(row.netSales)}, units ${formatNumber(row.netUnits)}`;
   const compareClass = options.isCompare ? " compare-period-point-group" : "";
   const pointClass = options.isCompare ? " compare-period-product-point" : "";
   const pointRadius = options.isCompare ? "5.5" : "4.7";
@@ -2691,12 +2924,14 @@ function renderProductComparePointGroup(product, row, salesPoint, unitsPoint, op
         <text x="14" y="20" class="trend-tooltip-label">Product</text>
         <text x="82" y="20" class="trend-tooltip-value">${escapeHtml(product.sku)}</text>
         <text x="14" y="39" class="trend-tooltip-value">${escapeHtml(productLabel)}</text>
-        <text x="14" y="59" class="trend-tooltip-label">${escapeHtml(periodLabel)}</text>
-        <text x="82" y="59" class="trend-tooltip-value">${escapeHtml(row.periodLabel)}</text>
-        <text x="14" y="79" class="trend-tooltip-label">Sales</text>
-        <text x="82" y="79" class="trend-tooltip-value">${escapeHtml(formatCurrency(row.netSales))}</text>
-        <text x="14" y="97" class="trend-tooltip-label">Units</text>
-        <text x="82" y="97" class="trend-tooltip-value">${escapeHtml(formatNumber(row.netUnits))}</text>
+        <text x="14" y="59" class="trend-tooltip-label">Region</text>
+        <text x="82" y="59" class="trend-tooltip-value">${escapeHtml(truncateText(regionLabel, 22))}</text>
+        <text x="14" y="78" class="trend-tooltip-label">${escapeHtml(periodLabel)}</text>
+        <text x="82" y="78" class="trend-tooltip-value">${escapeHtml(row.periodLabel)}</text>
+        <text x="14" y="98" class="trend-tooltip-label">Sales</text>
+        <text x="82" y="98" class="trend-tooltip-value">${escapeHtml(formatCurrency(row.netSales))}</text>
+        <text x="14" y="116" class="trend-tooltip-label">Units</text>
+        <text x="82" y="116" class="trend-tooltip-value">${escapeHtml(formatNumber(row.netUnits))}</text>
       </g>
     </g>
   `;
@@ -2704,7 +2939,7 @@ function renderProductComparePointGroup(product, row, salesPoint, unitsPoint, op
 
 function getProductCompareTooltipPosition(anchorX, anchorY, options) {
   const width = 260;
-  const height = 110;
+  const height = 128;
   const minX = options.pad.left + 4;
   const maxX = options.width - options.pad.right - width - 4;
   const x = Math.min(Math.max(anchorX - width / 2, minX), maxX);
@@ -3023,6 +3258,61 @@ function buildStatusSplit(currentRecords, comparisonRecords, hasComparison) {
   };
 }
 
+function buildMetricBreakdown(currentRecords, comparisonRecords, hasComparison, key, sortByStatus = false) {
+  const currentBreakdownRecords = currentRecords.filter((record) => !isHiddenResultValue(record[key]));
+  const comparisonBreakdownRecords = comparisonRecords.filter((record) => !isHiddenResultValue(record[key]));
+  const currentMap = aggregateByDimension(currentBreakdownRecords, key);
+  const compareMap = hasComparison ? aggregateByDimension(comparisonBreakdownRecords, key) : new Map();
+  const totalSales = sum(currentBreakdownRecords, "netSales");
+  const totalUnits = sum(currentBreakdownRecords, "netUnits");
+  const totalOrders = summarize(currentBreakdownRecords).orders;
+  const totalCompareSales = hasComparison ? sum(comparisonBreakdownRecords, "netSales") : null;
+  const values = Array.from(hasComparison ? new Set([...currentMap.keys(), ...compareMap.keys()]) : new Set(currentMap.keys()))
+    .filter((value) => !isHiddenResultValue(value));
+
+  const rows = values
+    .map((value) => {
+      const current = currentMap.get(value) || emptyAggregate();
+      const comparison = compareMap.get(value) || emptyAggregate();
+      const change = hasComparison ? current.netSales - comparison.netSales : null;
+
+      return {
+        value,
+        netSales: current.netSales,
+        netUnits: current.netUnits,
+        orders: current.orders.size,
+        salesShare: totalSales ? current.netSales / totalSales : 0,
+        unitsShare: totalUnits ? current.netUnits / totalUnits : 0,
+        hasComparison,
+        compareSales: hasComparison ? comparison.netSales : null,
+        compareUnits: hasComparison ? comparison.netUnits : null,
+        change,
+        changePct: hasComparison ? percentChange(current.netSales, comparison.netSales) : null
+      };
+    })
+    .filter((row) => row.netSales !== 0 || row.netUnits !== 0 || (hasComparison && row.compareSales !== 0));
+
+  rows.sort(sortByStatus
+    ? (a, b) => compareStatusLabels(a.value, b.value)
+    : (a, b) => b.netSales - a.netSales || b.netUnits - a.netUnits || collator.compare(a.value, b.value));
+
+  return {
+    rows,
+    totals: {
+      value: "Total",
+      netSales: totalSales,
+      netUnits: totalUnits,
+      orders: totalOrders,
+      salesShare: totalSales ? 1 : 0,
+      unitsShare: totalUnits ? 1 : 0,
+      hasComparison,
+      compareSales: totalCompareSales,
+      change: hasComparison ? totalSales - totalCompareSales : null,
+      changePct: hasComparison ? percentChange(totalSales, totalCompareSales) : null
+    }
+  };
+}
+
 function getOrderedStatusValues(currentMap, compareMap) {
   const values = new Set([...STATUS_DISPLAY_ORDER, ...currentMap.keys(), ...compareMap.keys()]);
   return Array.from(values)
@@ -3100,15 +3390,19 @@ function renderFiles() {
 
 function renderStatusSplitTable(rows, totals = null) {
   if (!dom.statusSplitTbody) return;
+  renderMetricBreakdownTable(dom.statusSplitTbody, rows, totals, "No status results for the selected period and filters");
+}
 
+function renderMetricBreakdownTable(target, rows, totals = null, emptyMessage = "No results for the selected period and filters") {
+  if (!target) return;
   if (!rows.length) {
-    dom.statusSplitTbody.innerHTML = `<tr><td colspan="9">No status results for the selected period and filters</td></tr>`;
+    target.innerHTML = `<tr><td colspan="9">${escapeHtml(emptyMessage)}</td></tr>`;
     return;
   }
 
   const totalRow = totals || null;
 
-  dom.statusSplitTbody.innerHTML = [
+  target.innerHTML = [
     ...rows.map((row) => renderStatusSplitRow(row)),
     totalRow ? renderStatusSplitRow(totalRow, true) : ""
   ].join("");
@@ -3610,11 +3904,68 @@ function sortRegionalProducts(a, b, sortKey) {
   return collator.compare(a.productTitle, b.productTitle);
 }
 
+function handleRegionalProductRegionChange() {
+  state.regionalProductRegion = getRegionalProductRegionFilter();
+  renderRegionalTopProducts(getVisibleRegionalTopProducts());
+  renderRegionalBreakdownTables();
+}
+
+function getRegionalProductRegionFilter() {
+  const value = dom.regionalProductRegion?.value || state.regionalProductRegion || "all";
+  if (value === "all") return "all";
+  return REGION_DEFS.some((region) => region.label === value) ? value : "all";
+}
+
+function getVisibleRegionalTopProducts(rows = state.regionalProductRows || []) {
+  const region = getRegionalProductRegionFilter();
+  state.regionalProductRegion = region;
+  if (dom.regionalProductRegion && dom.regionalProductRegion.value !== region) {
+    dom.regionalProductRegion.value = region;
+  }
+  return region === "all" ? rows : rows.filter((row) => row.region === region);
+}
+
+function getRegionalScopedRecords(records = []) {
+  const region = getRegionalProductRegionFilter();
+  return region === "all" ? records : records.filter((record) => record.region === region);
+}
+
+function renderRegionalBreakdownTables() {
+  const current = getRegionalScopedRecords(state.regionalCurrentRecords || []);
+  const comparison = getRegionalScopedRecords(state.regionalComparisonRecords || []);
+  const hasComparison = Boolean(state.regionalHasComparison);
+  const region = getRegionalProductRegionFilter();
+  const regionText = region === "all" ? "selected regions" : region;
+
+  const brandBreakdown = buildMetricBreakdown(current, comparison, hasComparison, "brand");
+  const franchiseBreakdown = buildMetricBreakdown(current, comparison, hasComparison, "franchise");
+
+  state.regionalBrandRows = brandBreakdown.rows;
+  state.regionalBrandTotals = brandBreakdown.totals;
+  state.regionalFranchiseRows = franchiseBreakdown.rows;
+  state.regionalFranchiseTotals = franchiseBreakdown.totals;
+
+  renderMetricBreakdownTable(
+    dom.regionalBrandTbody,
+    state.regionalBrandRows,
+    state.regionalBrandTotals,
+    `No brand breakdown results for ${regionText}.`
+  );
+  renderMetricBreakdownTable(
+    dom.regionalFranchiseTbody,
+    state.regionalFranchiseRows,
+    state.regionalFranchiseTotals,
+    `No franchise breakdown results for ${regionText}.`
+  );
+}
+
 function renderRegionalTopProducts(rows) {
   if (!dom.regionalProductsTbody) return;
 
   if (!rows.length) {
-    dom.regionalProductsTbody.innerHTML = `<tr><td colspan="7">No regional product results for the selected period and filters</td></tr>`;
+    const region = getRegionalProductRegionFilter();
+    const regionText = region === "all" ? "selected period and filters" : `${region} with the selected period and filters`;
+    dom.regionalProductsTbody.innerHTML = `<tr><td colspan="8">No regional product results for ${escapeHtml(regionText)}</td></tr>`;
     return;
   }
 
@@ -3625,6 +3976,7 @@ function renderRegionalTopProducts(rows) {
       <td class="numeric rank-change ${getRankChangeClass(row.rankChange)}">${escapeHtml(row.rankChange)}</td>
       <td>${renderClip(row.productTitle)}</td>
       <td>${renderClip(row.sku)}</td>
+      <td>${renderClip(row.status)}</td>
       <td class="numeric">${formatCurrency(row.netSales)}</td>
       <td class="numeric">${formatNumber(row.netUnits)}</td>
     </tr>
@@ -4286,8 +4638,8 @@ function exportProductCsv() {
 }
 
 function exportRegionalTopProductsCsv() {
-  const rows = state.regionalProductRows || [];
-  const headers = ["Region", "Rank", "Pos Change", "Product", "SKU", "Net Sales", "Net Units Sold"];
+  const rows = getVisibleRegionalTopProducts();
+  const headers = ["Region", "Rank", "Pos Change", "Product", "SKU", "Status", "Net Sales", "Net Units Sold"];
   const lines = [
     headers,
     ...rows.map((row) => [
@@ -4296,6 +4648,7 @@ function exportRegionalTopProductsCsv() {
       row.rankChange,
       row.productTitle,
       row.sku,
+      row.status,
       row.netSales,
       row.netUnits
     ])
@@ -4303,7 +4656,8 @@ function exportRegionalTopProductsCsv() {
   const periods = getAppliedPeriods();
   const start = periods.currentStart || "all";
   const end = periods.currentEnd || todayKey();
-  downloadFile(`regional-top-20-${start}-to-${end}.csv`, lines.map(csvLine).join("\n"), "text/csv");
+  const region = getRegionalProductRegionFilter().toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "all-regions";
+  downloadFile(`regional-top-20-${region}-${start}-to-${end}.csv`, lines.map(csvLine).join("\n"), "text/csv");
 }
 
 function exportTradeBrandCsv() {
@@ -4881,6 +5235,7 @@ function hydrateRecord(record) {
   const hydrated = {
     ...record,
     ...Object.fromEntries(DIMENSIONS.map((dimension) => [dimension.key, cleanDimension(record[dimension.key])])),
+    franchise: cleanDimension(record.franchise),
     status: normalizeStatus(record.status, record)
   };
   hydrated.region = getRegion(hydrated.shippingProvince);

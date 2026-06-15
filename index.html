@@ -342,6 +342,34 @@
               </div>
             </div>
             <div id="compare-selection" class="compare-selection" aria-label="Selected comparison products"></div>
+            <details id="compare-region-filter" class="compare-region-filter">
+              <summary>
+                <span>Region Lines</span>
+                <em id="compare-region-summary">All Regions Combined</em>
+              </summary>
+              <div id="compare-region-options" class="compare-region-options">
+                <label class="compare-region-option all-region-option">
+                  <input id="compare-region-all" type="checkbox" checked>
+                  <span>All Regions Combined</span>
+                </label>
+                <label class="compare-region-option">
+                  <input type="checkbox" data-compare-region="BC">
+                  <span>BC</span>
+                </label>
+                <label class="compare-region-option">
+                  <input type="checkbox" data-compare-region="ON">
+                  <span>ON</span>
+                </label>
+                <label class="compare-region-option">
+                  <input type="checkbox" data-compare-region="Prairies">
+                  <span>Prairies</span>
+                </label>
+                <label class="compare-region-option">
+                  <input type="checkbox" data-compare-region="QC + Atlantic">
+                  <span>QC + Atlantic</span>
+                </label>
+              </div>
+            </details>
             <div id="compare-chart" class="trend-chart compare-chart" role="img" aria-label="Product comparison trend line chart"></div>
             <div class="table-scroll compare-summary-scroll">
               <table class="compare-summary-table">
@@ -367,6 +395,16 @@
                 <h2>Top 20 Products by Region</h2>
               </div>
               <label class="panel-control">
+                <span>Region</span>
+                <select id="regional-product-region">
+                  <option value="all" selected>All Regions</option>
+                  <option value="BC">BC</option>
+                  <option value="ON">ON</option>
+                  <option value="Prairies">Prairies</option>
+                  <option value="QC + Atlantic">QC + Atlantic</option>
+                </select>
+              </label>
+              <label class="panel-control">
                 <span>Sort By</span>
                 <select id="regional-product-sort">
                   <option value="netSales" selected>Net Sales</option>
@@ -384,6 +422,7 @@
                     <th>Pos Change</th>
                     <th>Product</th>
                     <th>SKU</th>
+                    <th>Status</th>
                     <th>Net Sales</th>
                     <th>Net Units Sold</th>
                   </tr>
@@ -392,6 +431,61 @@
               </table>
             </div>
           </section>
+          <div class="regional-breakdown-grid">
+            <section class="panel table-panel regional-breakdown-panel">
+              <div class="panel-head">
+                <div>
+                  <span class="panel-kicker">Brand</span>
+                  <h2>Brand Breakdown</h2>
+                </div>
+              </div>
+              <div class="table-scroll tight">
+                <table class="status-split-table">
+                  <thead>
+                    <tr>
+                      <th>Brand</th>
+                      <th>Net Sales</th>
+                      <th>% Sales</th>
+                      <th>Net Units</th>
+                      <th>% Units</th>
+                      <th>Orders</th>
+                      <th>Compare Sales</th>
+                      <th>Change</th>
+                      <th>Change %</th>
+                    </tr>
+                  </thead>
+                  <tbody id="regional-brand-tbody"></tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="panel table-panel regional-breakdown-panel">
+              <div class="panel-head">
+                <div>
+                  <span class="panel-kicker">Franchise</span>
+                  <h2>Franchise Breakdown</h2>
+                </div>
+              </div>
+              <div class="table-scroll tight">
+                <table class="status-split-table">
+                  <thead>
+                    <tr>
+                      <th>Franchise</th>
+                      <th>Net Sales</th>
+                      <th>% Sales</th>
+                      <th>Net Units</th>
+                      <th>% Units</th>
+                      <th>Orders</th>
+                      <th>Compare Sales</th>
+                      <th>Change</th>
+                      <th>Change %</th>
+                    </tr>
+                  </thead>
+                  <tbody id="regional-franchise-tbody"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
         </section>
 
         <section class="dashboard-view" data-view-panel="settings" role="tabpanel" hidden>
