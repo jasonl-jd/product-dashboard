@@ -95,6 +95,15 @@
     {
       "path": "data/11051-JDSF---Weekly-Style-Sales-wk 10-13 2025.csv",
       "name": "2025 Week 10-13"
+    },
+    {
+      "path": "data/11051-JDSF---Weekly-Style-Sales-wk 19 2026.csv",
+      "name": "2026 Week 19"
+    },
+    {
+      "path": "data/11051-JDSF---Weekly-Style-Sales-wk 19 2025.csv",
+      "name": "2025 Week 19"
     }
+
   ]
 }
