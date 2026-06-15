@@ -7,7 +7,7 @@ window.addEventListener("unhandledrejection", (event) => reportGlobalError(event
 const DATA_MANIFEST_URL = "data/manifest.json";
 const DATA_CACHE_DB = "product-performance-dashboard";
 const DATA_CACHE_STORE = "parsed-files";
-const DATA_CACHE_VERSION = "parsed-csv-v9";
+const DATA_CACHE_VERSION = "parsed-csv-v10";
 const BLANK = "(blank)";
 const MAX_FILTER_OPTIONS = 180;
 const MAX_PIVOT_NAME_FILTER_OPTIONS = 360;
@@ -54,7 +54,7 @@ const PROVINCE_TO_REGION = new Map(
 const FIELD_DEFS = [
   { key: "sku", label: "SKU", headers: ["SKU"] },
   { key: "productTitle", label: "Product Title", headers: ["Product Title", "Product"] },
-  { key: "franchise", label: "Franchise", headers: ["Franchise"] },
+  { key: "franchise", label: "Franchise", headers: ["Franchise", "Collection"] },
   { key: "orderId", label: "Order ID", headers: ["Order ID", "Order"] },
   { key: "date", label: "Date", headers: ["Date", "Order Date"] },
   { key: "compareAtPrice", label: "Compare At price", headers: ["Compare At price", "Compare At Price", "Compare At"] },
@@ -1713,7 +1713,7 @@ function normalizeRecord(cells, fieldIndex, fileName, sourceHash, rowNumber) {
   const record = {
     sku: cleanText(cells[fieldIndex.sku]),
     productTitle: cleanText(cells[fieldIndex.productTitle]),
-    franchise: fieldIndex.franchise === undefined ? BLANK : cleanDimension(cells[fieldIndex.franchise]),
+    franchise: getFranchiseValue(cells, fieldIndex),
     orderId: cleanText(cells[fieldIndex.orderId]),
     dateTime: dateInfo.dateTime,
     dateKey: dateInfo.dateKey,
@@ -1736,6 +1736,16 @@ function normalizeRecord(cells, fieldIndex, fileName, sourceHash, rowNumber) {
   record.orderKey = getOrderKey(record);
 
   return record;
+}
+
+function getFranchiseValue(cells, fieldIndex) {
+  if (fieldIndex.franchise !== undefined) {
+    return cleanDimension(cells[fieldIndex.franchise]);
+  }
+  if (fieldIndex.collection !== undefined) {
+    return cleanDimension(cells[fieldIndex.collection]);
+  }
+  return BLANK;
 }
 
 function renderAll() {
