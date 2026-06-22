@@ -5,6 +5,8 @@ window.addEventListener("error", (event) => reportGlobalError(event.error || eve
 window.addEventListener("unhandledrejection", (event) => reportGlobalError(event.reason));
 
 const DATA_MANIFEST_URL = "data/manifest.json";
+const COMPILED_DATA_URL = "data/compiled-data.json";
+const COMPILED_DATA_SCHEMA_VERSION = 1;
 const DATA_CACHE_DB = "product-performance-dashboard";
 const DATA_CACHE_STORE = "parsed-files";
 const DATA_CACHE_VERSION = "parsed-csv-v10";
@@ -12,6 +14,8 @@ const PRODUCT_PANEL_COLLAPSED_STORAGE_KEY = "product-dashboard:product-panel-col
 const BLANK = "(blank)";
 const MAX_FILTER_OPTIONS = 180;
 const MAX_PIVOT_NAME_FILTER_OPTIONS = 360;
+const FILTER_APPLY_DEBOUNCE_MS = 180;
+const FILTER_OPTIONS_REFRESH_DEBOUNCE_MS = 260;
 const SKU_DISPLAY_WIDTH = 8;
 const TREND_SUGGESTION_LIMIT = 20;
 const TREND_SKU_SUGGESTION_MIN = 5;
@@ -65,6 +69,24 @@ const FIELD_DEFS = [
   ...DIMENSIONS
 ];
 
+const COMPILED_RECORD_FIELDS = [
+  "sku",
+  "productTitle",
+  "franchise",
+  "orderId",
+  "dateTime",
+  "dateKey",
+  "compareAtPrice",
+  "netSales",
+  "netUnits",
+  "isReturn",
+  "sourceFile",
+  "sourceHash",
+  "sourceRow",
+  "rowKey",
+  ...DIMENSIONS.map((dimension) => dimension.key)
+];
+
 const SORTERS = {
   value: (row) => row.value.toLocaleLowerCase(),
   status: (row) => row.status,
@@ -72,6 +94,7 @@ const SORTERS = {
   salesShare: (row) => row.salesShare,
   netUnits: (row) => row.netUnits,
   unitsShare: (row) => row.unitsShare,
+  orders: (row) => row.orders,
   compareSales: (row) => row.compareSales,
   change: (row) => row.change,
   changePct: (row) => row.changePct ?? Number.NEGATIVE_INFINITY
@@ -101,6 +124,18 @@ const PRODUCT_COLUMN_DEFS = [
   { key: "changePct", label: "Change %", numeric: true }
 ];
 
+const METRIC_BREAKDOWN_COLUMN_DEFS = [
+  { key: "value", label: "Name" },
+  { key: "netSales", label: "Net Sales", numeric: true },
+  { key: "salesShare", label: "% Sales", numeric: true },
+  { key: "netUnits", label: "Net Units", numeric: true },
+  { key: "unitsShare", label: "% Units", numeric: true },
+  { key: "orders", label: "Orders", numeric: true },
+  { key: "compareSales", label: "Compare Sales", numeric: true },
+  { key: "change", label: "Change", numeric: true },
+  { key: "changePct", label: "Change %", numeric: true }
+];
+
 const COLUMN_DEFS_BY_TABLE = {
   pivot: PIVOT_COLUMN_DEFS,
   product: PRODUCT_COLUMN_DEFS
@@ -116,6 +151,14 @@ const state = {
   analysisRecords: [],
   files: [],
   rowKeys: new Set(),
+  activeView: "performance",
+  viewDirty: {
+    performance: true,
+    trade: true,
+    compare: true,
+    regional: true
+  },
+  renderContext: null,
   filters: Object.fromEntries(DIMENSIONS.map((dimension) => [dimension.key, new Set()])),
   filterExclusions: Object.fromEntries(DIMENSIONS.map((dimension) => [dimension.key, new Set()])),
   filterAllSelected: Object.fromEntries(DIMENSIONS.map((dimension) => [dimension.key, false])),
@@ -140,6 +183,16 @@ const state = {
   regionalBrandTotals: null,
   regionalFranchiseRows: [],
   regionalFranchiseTotals: null,
+  regionalBreakdownSort: {
+    brand: {
+      key: "netSales",
+      dir: "desc"
+    },
+    franchise: {
+      key: "netSales",
+      dir: "desc"
+    }
+  },
   tradeBrandRows: [],
   tradeRegionalRows: [],
   tradePeriods: null,
@@ -186,6 +239,8 @@ const numberFormat = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 0 }
 const percentFormat = new Intl.NumberFormat("en-CA", { style: "percent", maximumFractionDigits: 1 });
 const collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
 let filterSearchTimer = null;
+let filterApplyTimer = null;
+let filterOptionsRefreshTimer = null;
 let columnDrag = null;
 let clipTooltipTarget = null;
 let clipTooltipFrame = null;
@@ -293,7 +348,9 @@ function collectDom() {
     regionalProductRegion: document.querySelector("#regional-product-region"),
     regionalProductSort: document.querySelector("#regional-product-sort"),
     regionalProductsTbody: document.querySelector("#regional-products-tbody"),
+    regionalBrandThead: document.querySelector("#regional-brand-thead"),
     regionalBrandTbody: document.querySelector("#regional-brand-tbody"),
+    regionalFranchiseThead: document.querySelector("#regional-franchise-thead"),
     regionalFranchiseTbody: document.querySelector("#regional-franchise-tbody"),
     viewTabs: document.querySelector(".view-tabs")
   });
@@ -310,7 +367,7 @@ function bindEvents() {
   dom.sortDir.addEventListener("change", renderAll);
   dom.rowLimit.addEventListener("change", renderAll);
   dom.regionalProductRegion?.addEventListener("change", handleRegionalProductRegionChange);
-  dom.regionalProductSort.addEventListener("change", renderAll);
+  dom.regionalProductSort.addEventListener("change", handleRegionalProductSortChange);
   dom.exportCsv.addEventListener("click", exportPivotCsv);
   dom.exportPivotTableCsv.addEventListener("click", exportPivotCsv);
   dom.exportProductCsv.addEventListener("click", exportProductCsv);
@@ -699,6 +756,7 @@ function handleViewTabClick(event) {
   if (!button) return;
 
   const view = button.dataset.viewTab;
+  state.activeView = view;
   document.querySelectorAll("[data-view-tab]").forEach((tab) => {
     const isActive = tab.dataset.viewTab === view;
     tab.classList.toggle("active", isActive);
@@ -709,6 +767,7 @@ function handleViewTabClick(event) {
     panel.classList.toggle("active", isActive);
     panel.hidden = !isActive;
   });
+  renderDirtyActiveView();
 }
 
 function handleSettingsTabClick(event) {
@@ -754,7 +813,31 @@ function handleTableSortClick(event) {
       state.productSort.dir = key === "productTitle" || key === "sku" || key === "status" ? "asc" : "desc";
     }
     renderProductTable(state.productRows);
+    return;
   }
+
+  if (table === "regional-brand" || table === "regional-franchise") {
+    updateRegionalBreakdownSort(table, key);
+    renderRegionalBreakdownTables();
+  }
+}
+
+function updateRegionalBreakdownSort(table, key) {
+  const sort = getRegionalBreakdownSortState(table);
+  if (!sort) return;
+
+  if (sort.key === key) {
+    sort.dir = sort.dir === "desc" ? "asc" : "desc";
+  } else {
+    sort.key = key;
+    sort.dir = key === "value" ? "asc" : "desc";
+  }
+}
+
+function getRegionalBreakdownSortState(table) {
+  if (table === "regional-brand") return state.regionalBreakdownSort.brand;
+  if (table === "regional-franchise") return state.regionalBreakdownSort.franchise;
+  return null;
 }
 
 function handleCollapseToggle(event) {
@@ -938,10 +1021,9 @@ function updateSortHeaderStates() {
   document.querySelectorAll("[data-table-sort]").forEach((button) => {
     const table = button.dataset.tableSort;
     const key = button.dataset.sortKey;
-    const isActive = table === "pivot"
-      ? dom.sortSelect.value === key
-      : state.productSort.key === key;
-    const direction = table === "pivot" ? dom.sortDir.value : state.productSort.dir;
+    const sort = getTableSortState(table);
+    const isActive = sort?.key === key;
+    const direction = sort?.dir || "desc";
 
     button.classList.toggle("active", isActive);
     button.setAttribute("aria-sort", isActive ? (direction === "asc" ? "ascending" : "descending") : "none");
@@ -951,6 +1033,18 @@ function updateSortHeaderStates() {
       delete button.dataset.sortDir;
     }
   });
+}
+
+function getTableSortState(table) {
+  if (table === "pivot") {
+    return {
+      key: dom.sortSelect?.value || "netSales",
+      dir: dom.sortDir?.value || "desc"
+    };
+  }
+  if (table === "product") return state.productSort;
+  if (table === "regional-brand" || table === "regional-franchise") return getRegionalBreakdownSortState(table);
+  return null;
 }
 
 function populateDimensionSelect() {
@@ -1186,6 +1280,12 @@ async function refreshRepositoryData({ preserveDates, forceRefresh } = { preserv
 async function loadRepositoryData({ forceRefresh = false } = {}) {
   const manifest = await fetchRepositoryManifest();
   const files = normalizeManifestFiles(manifest);
+  const compiled = await readCompiledRepositoryData(files);
+  if (compiled) {
+    applyCompiledRepositoryData(compiled);
+    return;
+  }
+
   const records = [];
   const fileMetas = [];
   const cacheKeys = [];
@@ -1264,6 +1364,96 @@ function normalizeManifestFiles(manifest) {
       };
     })
     .filter((entry) => entry.enabled && entry.path);
+}
+
+async function readCompiledRepositoryData(files) {
+  try {
+    const response = await fetch(withCacheBust(COMPILED_DATA_URL), { cache: "no-store" });
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      console.warn(`Could not load ${COMPILED_DATA_URL} (${response.status}). Falling back to CSV parsing.`);
+      return null;
+    }
+
+    const compiled = await response.json();
+    const expectedSignature = getManifestSignature(files);
+    if (compiled.schemaVersion !== COMPILED_DATA_SCHEMA_VERSION) {
+      console.warn("Compiled data schema is outdated. Falling back to CSV parsing.");
+      return null;
+    }
+    if (compiled.manifestSignature !== expectedSignature) {
+      console.warn("Compiled data does not match data/manifest.json. Falling back to CSV parsing.");
+      return null;
+    }
+    if (Array.isArray(compiled.chunks) && compiled.chunks.length) {
+      compiled.records = await loadCompiledDataChunks(compiled.chunks);
+    }
+    if (!Array.isArray(compiled.records)) {
+      console.warn("Compiled data has no records array or chunks. Falling back to CSV parsing.");
+      return null;
+    }
+    return compiled;
+  } catch (error) {
+    console.warn("Could not read compiled data. Falling back to CSV parsing.", error);
+    return null;
+  }
+}
+
+async function loadCompiledDataChunks(chunks) {
+  const records = [];
+  for (const chunk of chunks) {
+    const chunkPath = cleanText(chunk?.path);
+    if (!chunkPath) continue;
+    setStatus(`Loading compiled data chunk ${records.length ? numberFormat.format(records.length) : "0"} rows...`, "busy");
+    const response = await fetch(withCacheBust(chunkPath), { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`Could not load compiled data chunk ${chunkPath} (${response.status}).`);
+    }
+    const payload = await response.json();
+    const chunkRecords = Array.isArray(payload) ? payload : payload.records;
+    if (!Array.isArray(chunkRecords)) {
+      throw new Error(`Compiled data chunk ${chunkPath} has no records array.`);
+    }
+    appendItems(records, chunkRecords);
+    await pause();
+  }
+  return records;
+}
+
+function applyCompiledRepositoryData(compiled) {
+  setStatus("Using compiled shared data...", "busy");
+  const fields = Array.isArray(compiled.fields) && compiled.fields.length ? compiled.fields : COMPILED_RECORD_FIELDS;
+  const records = compiled.records.map((entry) => hydrateRecord(expandCompiledRecord(entry, fields, compiled)));
+  state.records = records;
+  state.analysisRecords = filterAnalysisRecords(records);
+  state.files = Array.isArray(compiled.files)
+    ? compiled.files.map((file) => ({
+      ...file,
+      source: file.source || "Compiled data"
+    }))
+    : [];
+  state.rowKeys = buildRowKeySet(records);
+}
+
+function expandCompiledRecord(entry, fields, compiled = null) {
+  if (!Array.isArray(entry)) return entry || {};
+  const dictionary = Array.isArray(compiled?.dictionary) ? compiled.dictionary : null;
+  const numericFields = new Set(compiled?.numericFields || []);
+  const rawFields = new Set(compiled?.rawFields || []);
+  const record = {};
+  fields.forEach((field, index) => {
+    const value = entry[index];
+    record[field] = dictionary && !numericFields.has(field) && !rawFields.has(field) ? dictionary[value] ?? "" : value;
+  });
+  return record;
+}
+
+function getManifestSignature(files) {
+  return JSON.stringify(files.map((file) => ({
+    path: file.path,
+    name: file.name,
+    version: file.version || ""
+  })));
 }
 
 function withCacheBust(path) {
@@ -1781,15 +1971,25 @@ function getFranchiseValue(cells, fieldIndex) {
   return BLANK;
 }
 
-function renderAll() {
+function renderAll(options = {}) {
   hideClipTooltip();
   activeTrendPoint = null;
-  const analysisRecords = getAnalysisRecords();
-  const dateSummary = getDatasetDateSummary();
-  dom.dataRange.textContent = dateSummary ? `${dateSummary.min} to ${dateSummary.max}` : "No data loaded";
-  dom.recordCount.textContent = `${numberFormat.format(analysisRecords.length)} analysis rows`;
+  const context = buildRenderContext();
+  state.renderContext = context;
+  updateDatasetSummary(context);
 
-  renderFilters();
+  if (options.renderFilters !== false) {
+    renderFilters();
+  }
+
+  renderGlobalDashboardOutputs(context);
+  markDashboardViewsDirty();
+  renderDirtyActiveView(context);
+  updateTrendSelectionButton();
+}
+
+function buildRenderContext() {
+  const analysisRecords = getAnalysisRecords();
   const periods = getAppliedPeriods();
   const filtered = applyDimensionFilters(analysisRecords);
   const current = filtered.filter((record) => inDateRange(record, periods.currentStart, periods.currentEnd));
@@ -1798,26 +1998,89 @@ function renderAll() {
   const currentSummary = summarize(current);
   const compareSummary = summarize(comparison);
 
-  renderKpis(currentSummary, compareSummary, hasComparison);
-  renderTrendTable(current);
-  renderProductCompare(current);
-  renderTradeMeeting(filtered);
-  const statusSplit = buildStatusSplit(current, comparison, hasComparison);
+  return {
+    analysisRecords,
+    periods,
+    filtered,
+    current,
+    comparison,
+    hasComparison,
+    currentSummary,
+    compareSummary
+  };
+}
+
+function updateDatasetSummary(context) {
+  const dateSummary = getDatasetDateSummary();
+  dom.dataRange.textContent = dateSummary ? `${dateSummary.min} to ${dateSummary.max}` : "No data loaded";
+  dom.recordCount.textContent = `${numberFormat.format(context.analysisRecords.length)} analysis rows`;
+}
+
+function renderGlobalDashboardOutputs(context) {
+  renderKpis(context.currentSummary, context.compareSummary, context.hasComparison);
+  const statusSplit = buildStatusSplit(context.current, context.comparison, context.hasComparison);
   state.statusRows = statusSplit.rows;
   state.statusTotals = statusSplit.totals;
-  state.pivotRows = buildPivot(current, comparison, hasComparison);
-  state.productRows = buildProductResults(current, comparison, hasComparison);
-  state.regionalProductRows = buildRegionalTopProducts(current, comparison, hasComparison);
-  state.regionalCurrentRecords = current;
-  state.regionalComparisonRecords = comparison;
-  state.regionalHasComparison = hasComparison;
-  renderStatusSplitTable(state.statusRows, state.statusTotals);
-  renderPivotOutputs();
+  state.pivotRows = buildPivot(context.current, context.comparison, context.hasComparison);
+  state.productRows = buildProductResults(context.current, context.comparison, context.hasComparison);
   renderFiles();
   renderProductTable(state.productRows);
+}
+
+function markDashboardViewsDirty() {
+  Object.keys(state.viewDirty).forEach((view) => {
+    state.viewDirty[view] = true;
+  });
+}
+
+function renderDirtyActiveView(context = state.renderContext) {
+  const view = state.activeView || "performance";
+  if (!(view in state.viewDirty)) return;
+  if (!state.viewDirty[view]) return;
+  renderDashboardView(view, context);
+}
+
+function renderDashboardView(view, context = state.renderContext) {
+  if (!context) return;
+
+  if (view === "performance") {
+    renderTrendTable(context.current);
+    renderStatusSplitTable(state.statusRows, state.statusTotals);
+    renderPivotOutputs();
+    state.viewDirty.performance = false;
+    return;
+  }
+
+  if (view === "compare") {
+    renderProductCompare(context.current);
+    state.viewDirty.compare = false;
+    return;
+  }
+
+  if (view === "trade") {
+    renderTradeMeeting(context.filtered);
+    state.viewDirty.trade = false;
+    return;
+  }
+
+  if (view === "regional") {
+    renderRegionalView(context);
+    state.viewDirty.regional = false;
+  }
+}
+
+function ensureViewFresh(view) {
+  if (state.viewDirty[view]) renderDashboardView(view);
+}
+
+function renderRegionalView(context = state.renderContext) {
+  if (!context) return;
+  state.regionalProductRows = buildRegionalTopProducts(context.current, context.comparison, context.hasComparison);
+  state.regionalCurrentRecords = context.current;
+  state.regionalComparisonRecords = context.comparison;
+  state.regionalHasComparison = context.hasComparison;
   renderRegionalTopProducts(getVisibleRegionalTopProducts());
   renderRegionalBreakdownTables();
-  updateTrendSelectionButton();
 }
 
 function renderKpis(current, comparison, hasComparison) {
@@ -1979,7 +2242,8 @@ function handleFilterChange(event) {
   }
 
   updateFilterCountLabel(key);
-  renderAll();
+  updateFilterToggleButton(key);
+  scheduleFilterApply();
 }
 
 function handleFilterClick(event) {
@@ -1991,10 +2255,43 @@ function handleFilterClick(event) {
   state.filterExclusions[key]?.clear();
   state.filterOpen[key] = true;
   updateFilterCountLabel(key);
-  renderAll();
+  updateFilterToggleButton(key);
+  renderFilterOptions(key);
+  scheduleFilterApply();
+}
+
+function scheduleFilterApply() {
+  window.clearTimeout(filterApplyTimer);
+  filterApplyTimer = window.setTimeout(() => {
+    filterApplyTimer = null;
+    renderAll({ renderFilters: false });
+    scheduleFilterOptionsRefresh();
+  }, FILTER_APPLY_DEBOUNCE_MS);
+}
+
+function scheduleFilterOptionsRefresh() {
+  window.clearTimeout(filterOptionsRefreshTimer);
+  filterOptionsRefreshTimer = window.setTimeout(() => {
+    filterOptionsRefreshTimer = null;
+    refreshVisibleFilterOptions();
+  }, FILTER_OPTIONS_REFRESH_DEBOUNCE_MS);
+}
+
+function refreshVisibleFilterOptions() {
+  for (const dimension of DIMENSIONS) {
+    updateFilterCountLabel(dimension.key);
+    updateFilterToggleButton(dimension.key);
+  }
+  dom.filters.querySelectorAll(".filter-group[open] [data-filter-options]").forEach((container) => {
+    renderFilterOptions(container.dataset.filterOptions);
+  });
 }
 
 function clearAllFilters() {
+  window.clearTimeout(filterApplyTimer);
+  window.clearTimeout(filterOptionsRefreshTimer);
+  filterApplyTimer = null;
+  filterOptionsRefreshTimer = null;
   for (const dimension of DIMENSIONS) {
     state.filters[dimension.key].clear();
     state.filterExclusions[dimension.key]?.clear();
@@ -2026,6 +2323,12 @@ function updateFilterCountLabel(key) {
   const label = group?.querySelector(".filter-count");
   if (!label) return;
   label.textContent = getFilterCountLabel(key);
+}
+
+function updateFilterToggleButton(key) {
+  const button = dom.filters.querySelector(`[data-filter-toggle-all="${key}"]`);
+  if (!button) return;
+  button.textContent = getFilterToggleButtonLabel(key);
 }
 
 function getFilterCountLabel(key) {
@@ -3262,12 +3565,14 @@ function buildStatusSplit(currentRecords, comparisonRecords, hasComparison) {
   const totalUnits = sum(currentStatusRecords, "netUnits");
   const totalOrders = summarize(currentStatusRecords).orders;
   const totalCompareSales = hasComparison ? sum(comparisonStatusRecords, "netSales") : null;
+  const totalCompareUnits = hasComparison ? sum(comparisonStatusRecords, "netUnits") : null;
   const values = getOrderedStatusValues(currentMap, compareMap);
 
   const rows = values.map((value) => {
     const current = currentMap.get(value) || emptyAggregate();
     const comparison = compareMap.get(value) || emptyAggregate();
     const change = hasComparison ? current.netSales - comparison.netSales : null;
+    const unitChange = hasComparison ? current.netUnits - comparison.netUnits : null;
 
     return {
       value,
@@ -3280,6 +3585,7 @@ function buildStatusSplit(currentRecords, comparisonRecords, hasComparison) {
       compareSales: hasComparison ? comparison.netSales : null,
       compareUnits: hasComparison ? comparison.netUnits : null,
       change,
+      unitChange,
       changePct: hasComparison ? percentChange(current.netSales, comparison.netSales) : null
     };
   });
@@ -3295,7 +3601,9 @@ function buildStatusSplit(currentRecords, comparisonRecords, hasComparison) {
       unitsShare: totalUnits ? 1 : 0,
       hasComparison,
       compareSales: totalCompareSales,
+      compareUnits: totalCompareUnits,
       change: hasComparison ? totalSales - totalCompareSales : null,
+      unitChange: hasComparison ? totalUnits - totalCompareUnits : null,
       changePct: hasComparison ? percentChange(totalSales, totalCompareSales) : null
     }
   };
@@ -3433,26 +3741,69 @@ function renderFiles() {
 
 function renderStatusSplitTable(rows, totals = null) {
   if (!dom.statusSplitTbody) return;
-  renderMetricBreakdownTable(dom.statusSplitTbody, rows, totals, "No status results for the selected period and filters");
+  renderMetricBreakdownTable(dom.statusSplitTbody, rows, totals, "No status results for the selected period and filters", {
+    includeUnitChange: true
+  });
 }
 
-function renderMetricBreakdownTable(target, rows, totals = null, emptyMessage = "No results for the selected period and filters") {
+function getMetricBreakdownColumns(firstLabel) {
+  return METRIC_BREAKDOWN_COLUMN_DEFS.map((column, index) => (
+    index === 0 ? { ...column, label: firstLabel } : column
+  ));
+}
+
+function renderMetricBreakdownHeader(target, table, firstLabel) {
   if (!target) return;
+  const columns = getMetricBreakdownColumns(firstLabel);
+  target.innerHTML = `<tr>${columns.map((column) => renderTableHeader(table, column)).join("")}</tr>`;
+}
+
+function sortMetricBreakdownRows(rows, table) {
+  const sort = getTableSortState(table) || { key: "netSales", dir: "desc" };
+  const direction = sort.dir === "asc" ? 1 : -1;
+  const getter = SORTERS[sort.key] || SORTERS.netSales;
+
+  return rows.slice().sort((a, b) => {
+    const aValue = getter(a);
+    const bValue = getter(b);
+    const aMissing = aValue === null || aValue === undefined || aValue === "";
+    const bMissing = bValue === null || bValue === undefined || bValue === "";
+
+    if (aMissing && bMissing) return collator.compare(a.value || "", b.value || "");
+    if (aMissing) return 1;
+    if (bMissing) return -1;
+
+    if (typeof aValue === "string" || typeof bValue === "string") {
+      return collator.compare(String(aValue), String(bValue)) * direction;
+    }
+
+    const primary = ((Number(aValue) || 0) - (Number(bValue) || 0)) * direction;
+    if (primary) return primary;
+    return collator.compare(a.value || "", b.value || "");
+  });
+}
+
+function renderMetricBreakdownTable(target, rows, totals = null, emptyMessage = "No results for the selected period and filters", options = {}) {
+  if (!target) return;
+  const columnCount = options.includeUnitChange ? 10 : 9;
   if (!rows.length) {
-    target.innerHTML = `<tr><td colspan="9">${escapeHtml(emptyMessage)}</td></tr>`;
+    target.innerHTML = `<tr><td colspan="${columnCount}">${escapeHtml(emptyMessage)}</td></tr>`;
     return;
   }
 
   const totalRow = totals || null;
 
   target.innerHTML = [
-    ...rows.map((row) => renderStatusSplitRow(row)),
-    totalRow ? renderStatusSplitRow(totalRow, true) : ""
+    ...rows.map((row) => renderStatusSplitRow(row, false, options)),
+    totalRow ? renderStatusSplitRow(totalRow, true, options) : ""
   ].join("");
 }
 
-function renderStatusSplitRow(row, isTotal = false) {
+function renderStatusSplitRow(row, isTotal = false, options = {}) {
   const rowClass = isTotal ? ` class="total-row"` : "";
+  const unitChangeCell = options.includeUnitChange
+    ? `<td class="numeric ${getDeltaClass(row, "unitChange")}">${row.hasComparison ? formatNumber(row.unitChange) : ""}</td>`
+    : "";
   return `
     <tr${rowClass}>
       <td>${isTotal ? escapeHtml(row.value) : renderClip(row.value)}</td>
@@ -3463,6 +3814,7 @@ function renderStatusSplitRow(row, isTotal = false) {
       <td class="numeric">${formatNumber(row.orders)}</td>
       <td class="numeric">${row.hasComparison ? formatCurrency(row.compareSales) : ""}</td>
       <td class="numeric ${getDeltaClass(row, "change")}">${row.hasComparison ? formatCurrency(row.change) : ""}</td>
+      ${unitChangeCell}
       <td class="numeric ${getDeltaClass(row, "changePct")}">${row.hasComparison ? (row.changePct === null ? "n/a" : formatPercent(row.changePct)) : ""}</td>
     </tr>
   `;
@@ -3949,8 +4301,19 @@ function sortRegionalProducts(a, b, sortKey) {
 
 function handleRegionalProductRegionChange() {
   state.regionalProductRegion = getRegionalProductRegionFilter();
+  if (state.viewDirty.regional) {
+    renderRegionalView();
+    state.viewDirty.regional = false;
+    return;
+  }
   renderRegionalTopProducts(getVisibleRegionalTopProducts());
   renderRegionalBreakdownTables();
+  state.viewDirty.regional = false;
+}
+
+function handleRegionalProductSortChange() {
+  state.viewDirty.regional = true;
+  renderDashboardView("regional");
 }
 
 function getRegionalProductRegionFilter() {
@@ -3988,18 +4351,22 @@ function renderRegionalBreakdownTables() {
   state.regionalFranchiseRows = franchiseBreakdown.rows;
   state.regionalFranchiseTotals = franchiseBreakdown.totals;
 
+  renderMetricBreakdownHeader(dom.regionalBrandThead, "regional-brand", "Brand");
+  renderMetricBreakdownHeader(dom.regionalFranchiseThead, "regional-franchise", "Franchise");
+
   renderMetricBreakdownTable(
     dom.regionalBrandTbody,
-    state.regionalBrandRows,
+    sortMetricBreakdownRows(state.regionalBrandRows, "regional-brand"),
     state.regionalBrandTotals,
     `No brand breakdown results for ${regionText}.`
   );
   renderMetricBreakdownTable(
     dom.regionalFranchiseTbody,
-    state.regionalFranchiseRows,
+    sortMetricBreakdownRows(state.regionalFranchiseRows, "regional-franchise"),
     state.regionalFranchiseTotals,
     `No franchise breakdown results for ${regionText}.`
   );
+  updateSortHeaderStates();
 }
 
 function renderRegionalTopProducts(rows) {
@@ -4681,6 +5048,7 @@ function exportProductCsv() {
 }
 
 function exportRegionalTopProductsCsv() {
+  ensureViewFresh("regional");
   const rows = getVisibleRegionalTopProducts();
   const headers = ["Region", "Rank", "Pos Change", "Product", "SKU", "Status", "Net Sales", "Net Units Sold"];
   const lines = [
@@ -4704,6 +5072,7 @@ function exportRegionalTopProductsCsv() {
 }
 
 function exportTradeBrandCsv() {
+  ensureViewFresh("trade");
   const periods = state.tradePeriods || getTradePeriods();
   const headers = ["Fiscal Week", "Compare Week", "Brand", "Net Sales", "Net Units", "Sales Change", "Change %", "Key SKUs"];
   const rows = (state.tradeBrandRows || []).slice(0, 10);
@@ -4724,6 +5093,7 @@ function exportTradeBrandCsv() {
 }
 
 function exportTradeRegionalCsv() {
+  ensureViewFresh("trade");
   const periods = state.tradePeriods || getTradePeriods();
   const headers = ["Fiscal Week", "Region", "Rank", "Product Title", "Net Sales", "Units Sold", "Status", "Pos Change"];
   const rows = state.tradeRegionalRows || [];
@@ -5283,6 +5653,7 @@ function hydrateRecord(record) {
   };
   hydrated.region = getRegion(hydrated.shippingProvince);
   hydrated.orderKey = getOrderKey(hydrated);
+  hydrated.rowKey = cleanText(hydrated.rowKey) || `${hydrated.sourceHash}|row:${hydrated.sourceRow}`;
   return hydrated;
 }
 

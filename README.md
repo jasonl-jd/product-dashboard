@@ -115,6 +115,16 @@ Only list CSV files that actually exist in the repository. If a manifest entry p
 
 The dashboard caches parsed CSV data in the browser with IndexedDB. The first load still downloads and parses the files, but later visits can reuse cached parsed records. If you replace a CSV without changing its file path, update that manifest entry's `version` so every browser knows to refresh its cache.
 
+## Faster Startup With Compiled Data
+
+For faster GitHub Pages startup, generate `data/compiled-data.json` after updating CSV files:
+
+```powershell
+node tools/build-compiled-data.js
+```
+
+Commit `data/compiled-data.json` and any generated `data/compiled-data-0001.json` style chunk files with the CSV and manifest changes. When the compiled files match `data/manifest.json`, the dashboard loads them instead of parsing every CSV in the browser. If the compiled data is missing or stale, the dashboard falls back to the CSV files automatically.
+
 ## Troubleshooting Data Files
 
 If the dashboard says a CSV loaded as HTML, the manifest path is not returning the actual CSV file.
