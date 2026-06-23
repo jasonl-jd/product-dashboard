@@ -8,7 +8,7 @@ const DATA_DIR = path.join(ROOT, "data");
 const MANIFEST_PATH = path.join(DATA_DIR, "manifest.json");
 const OUTPUT_PATH = path.join(DATA_DIR, "compiled-data.json");
 const COMPILED_DATA_SCHEMA_VERSION = 1;
-const COMPILED_CHUNK_RECORD_LIMIT = 175000;
+const COMPILED_CHUNK_RECORD_LIMIT = 50000;
 const BLANK = "(blank)";
 const UNASSIGNED_ATTRIBUTE_VALUES = new Set(["false"]);
 
