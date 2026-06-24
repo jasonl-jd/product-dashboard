@@ -123,7 +123,7 @@ For faster GitHub Pages startup, generate `data/compiled-data.json` after updati
 node tools/build-compiled-data.js
 ```
 
-Commit `data/compiled-data.json` and any generated `data/compiled-data-0001.json` style chunk files with the CSV and manifest changes. When the compiled files match `data/manifest.json`, the dashboard loads them instead of parsing every CSV in the browser. If the compiled data is missing or stale, the dashboard falls back to the CSV files automatically.
+Commit `data/compiled-data.json` and the generated files in `data/compiled/` with the CSV and manifest changes. The compiler creates one compiled JSON file per source CSV, so a normal weekly append only adds one new compiled file plus the refreshed `data/compiled-data.json` index. When the compiled files match `data/manifest.json`, the dashboard loads them instead of parsing every CSV in the browser. If the compiled data is missing or stale, the dashboard falls back to the CSV files automatically.
 
 ## Troubleshooting Data Files
 

@@ -1385,7 +1385,9 @@ async function readCompiledRepositoryData(files) {
       console.warn("Compiled data does not match data/manifest.json. Falling back to CSV parsing.");
       return null;
     }
-    if (Array.isArray(compiled.chunks) && compiled.chunks.length) {
+    if (hasPerFileCompiledData(compiled)) {
+      compiled.records = await loadCompiledDataFiles(compiled.files);
+    } else if (Array.isArray(compiled.chunks) && compiled.chunks.length) {
       compiled.records = await loadCompiledDataChunks(compiled.chunks);
     }
     if (!Array.isArray(compiled.records)) {
@@ -1397,6 +1399,32 @@ async function readCompiledRepositoryData(files) {
     console.warn("Could not read compiled data. Falling back to CSV parsing.", error);
     return null;
   }
+}
+
+function hasPerFileCompiledData(compiled) {
+  return Array.isArray(compiled?.files) && compiled.files.some((file) => cleanText(file?.compiledPath));
+}
+
+async function loadCompiledDataFiles(files) {
+  const records = [];
+  for (const file of files) {
+    const compiledPath = cleanText(file?.compiledPath);
+    if (!compiledPath) continue;
+    setStatus(`Loading compiled data for ${file.name || file.path || "file"}...`, "busy");
+    const response = await fetch(withCacheBust(compiledPath), { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`Could not load compiled data file ${compiledPath} (${response.status}).`);
+    }
+    const payload = await response.json();
+    const fields = Array.isArray(payload.fields) && payload.fields.length ? payload.fields : COMPILED_RECORD_FIELDS;
+    if (!Array.isArray(payload.records)) {
+      throw new Error(`Compiled data file ${compiledPath} has no records array.`);
+    }
+    const expandedRecords = payload.records.map((entry) => expandCompiledRecord(entry, fields, payload));
+    appendItems(records, expandedRecords);
+    await pause();
+  }
+  return records;
 }
 
 async function loadCompiledDataChunks(chunks) {
