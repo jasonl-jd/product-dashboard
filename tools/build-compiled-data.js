@@ -2,13 +2,14 @@
 
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 const ROOT = path.resolve(__dirname, "..");
 const DATA_DIR = path.join(ROOT, "data");
+const COMPILED_DIR = path.join(DATA_DIR, "compiled");
 const MANIFEST_PATH = path.join(DATA_DIR, "manifest.json");
 const OUTPUT_PATH = path.join(DATA_DIR, "compiled-data.json");
 const COMPILED_DATA_SCHEMA_VERSION = 1;
-const COMPILED_CHUNK_RECORD_LIMIT = 50000;
 const BLANK = "(blank)";
 const UNASSIGNED_ATTRIBUTE_VALUES = new Set(["false"]);
 
@@ -73,10 +74,10 @@ main();
 function main() {
   const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf8"));
   const files = normalizeManifestFiles(manifest);
-  const records = [];
   const fileMetas = [];
-  const dictionary = [];
-  const dictionaryIndex = new Map();
+  const compiledPaths = new Set();
+  let rowCount = 0;
+  ensureCompiledDir();
 
   for (const file of files) {
     if (!file.path.toLowerCase().endsWith(".csv")) {
@@ -91,12 +92,17 @@ function main() {
     const text = fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, "");
     const parsed = parseSalesCsv(text, file.name, sourceHash);
     const addedRecords = parsed.records.map(hydrateRecord);
-    records.push(...addedRecords.map((record) => compactRecord(record, dictionary, dictionaryIndex)));
+    const compiledFile = buildCompiledFile(file, addedRecords);
+    writeFileIfChanged(compiledFile.absolutePath, JSON.stringify(compiledFile.payload));
+    compiledPaths.add(compiledFile.absolutePath);
+    rowCount += addedRecords.length;
     fileMetas.push({
       hash: sourceHash,
       name: file.name,
       path: file.path,
+      version: file.version || "",
       source: "Compiled data",
+      compiledPath: compiledFile.relativePath,
       rowsRead: parsed.records.length,
       rowsAdded: addedRecords.length,
       rowsSkipped: 0,
@@ -105,47 +111,83 @@ function main() {
       netSales: sum(addedRecords, "netSales"),
       netUnits: sum(addedRecords, "netUnits")
     });
-    console.log(`Compiled ${file.name}: ${addedRecords.length.toLocaleString()} rows`);
+    console.log(`Compiled ${file.name}: ${addedRecords.length.toLocaleString()} rows -> ${compiledFile.relativePath}`);
   }
 
-  const chunks = writeCompiledChunks(records);
+  pruneObsoleteCompiledFiles(compiledPaths);
   const compiled = {
     schemaVersion: COMPILED_DATA_SCHEMA_VERSION,
-    encoding: "dictionary-v1",
+    encoding: "per-file-dictionary-v1",
     builtAt: new Date().toISOString(),
     manifestSignature: getManifestSignature(files),
     fields: COMPILED_RECORD_FIELDS,
     numericFields: Array.from(NUMERIC_COMPILED_FIELDS),
     rawFields: Array.from(RAW_COMPILED_FIELDS),
-    dictionary,
     files: fileMetas,
-    rowCount: records.length,
-    chunks
+    rowCount
   };
 
   fs.writeFileSync(OUTPUT_PATH, JSON.stringify(compiled));
-  console.log(`Wrote ${path.relative(ROOT, OUTPUT_PATH)} with ${records.length.toLocaleString()} rows across ${chunks.length} chunks.`);
+  console.log(`Wrote ${path.relative(ROOT, OUTPUT_PATH)} with ${rowCount.toLocaleString()} rows across ${fileMetas.length} compiled files.`);
 }
 
-function writeCompiledChunks(records) {
+function ensureCompiledDir() {
+  fs.mkdirSync(COMPILED_DIR, { recursive: true });
   for (const entry of fs.readdirSync(DATA_DIR)) {
     if (/^compiled-data-\d{4}\.json$/i.test(entry)) {
       fs.unlinkSync(path.join(DATA_DIR, entry));
     }
   }
+}
 
-  const chunks = [];
-  for (let index = 0; index < records.length; index += COMPILED_CHUNK_RECORD_LIMIT) {
-    const chunkNumber = String(chunks.length + 1).padStart(4, "0");
-    const fileName = `compiled-data-${chunkNumber}.json`;
-    const chunkRecords = records.slice(index, index + COMPILED_CHUNK_RECORD_LIMIT);
-    fs.writeFileSync(path.join(DATA_DIR, fileName), JSON.stringify({ records: chunkRecords }));
-    chunks.push({
-      path: `data/${fileName}`,
-      rows: chunkRecords.length
-    });
+function buildCompiledFile(file, records) {
+  const dictionary = [];
+  const dictionaryIndex = new Map();
+  const compactRecords = records.map((record) => compactRecord(record, dictionary, dictionaryIndex));
+  const fileName = `${compiledFileSlug(file)}.json`;
+  const relativePath = `data/compiled/${fileName}`;
+  const absolutePath = path.join(COMPILED_DIR, fileName);
+  const payload = {
+    schemaVersion: COMPILED_DATA_SCHEMA_VERSION,
+    encoding: "file-dictionary-v1",
+    sourcePath: file.path,
+    sourceName: file.name,
+    sourceVersion: file.version || "",
+    fields: COMPILED_RECORD_FIELDS,
+    numericFields: Array.from(NUMERIC_COMPILED_FIELDS),
+    rawFields: Array.from(RAW_COMPILED_FIELDS),
+    dictionary,
+    records: compactRecords
+  };
+  return { absolutePath, relativePath, payload };
+}
+
+function compiledFileSlug(file) {
+  const base = stripExtension(fileNameFromPath(file.path))
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 72) || "compiled-file";
+  const hash = crypto.createHash("sha1").update(file.path).digest("hex").slice(0, 10);
+  return `${base}-${hash}`;
+}
+
+function stripExtension(value) {
+  return cleanText(value).replace(/\.[^.]+$/, "");
+}
+
+function writeFileIfChanged(filePath, content) {
+  if (fs.existsSync(filePath) && fs.readFileSync(filePath, "utf8") === content) return;
+  fs.writeFileSync(filePath, content);
+}
+
+function pruneObsoleteCompiledFiles(validPaths) {
+  if (!fs.existsSync(COMPILED_DIR)) return;
+  for (const entry of fs.readdirSync(COMPILED_DIR)) {
+    if (!entry.toLowerCase().endsWith(".json")) continue;
+    const absolutePath = path.join(COMPILED_DIR, entry);
+    if (!validPaths.has(absolutePath)) fs.unlinkSync(absolutePath);
   }
-  return chunks;
 }
 
 function parseSalesCsv(text, fileName, sourceHash) {
