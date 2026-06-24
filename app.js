@@ -11,6 +11,13 @@ const DATA_CACHE_DB = "product-performance-dashboard";
 const DATA_CACHE_STORE = "parsed-files";
 const DATA_CACHE_VERSION = "parsed-csv-v10";
 const PRODUCT_PANEL_COLLAPSED_STORAGE_KEY = "product-dashboard:product-panel-collapsed";
+const COLUMN_SETTINGS_VERSION = 2;
+const COLUMN_SETTINGS_VERSION_STORAGE_KEY = "product-dashboard:column-settings-version";
+const COLUMN_SETTINGS_MIGRATION_VISIBLE_KEYS = {
+  status: ["value", "unitChange", "unitChangePct"],
+  pivot: ["unitChange", "unitChangePct"],
+  product: ["unitChange", "unitChangePct"]
+};
 const BLANK = "(blank)";
 const MAX_FILTER_OPTIONS = 180;
 const MAX_PIVOT_NAME_FILTER_OPTIONS = 360;
@@ -97,7 +104,9 @@ const SORTERS = {
   orders: (row) => row.orders,
   compareSales: (row) => row.compareSales,
   change: (row) => row.change,
-  changePct: (row) => row.changePct ?? Number.NEGATIVE_INFINITY
+  changePct: (row) => row.changePct ?? Number.NEGATIVE_INFINITY,
+  unitChange: (row) => row.unitChange,
+  unitChangePct: (row) => row.unitChangePct ?? Number.NEGATIVE_INFINITY
 };
 
 const PIVOT_COLUMN_DEFS = [
@@ -109,7 +118,9 @@ const PIVOT_COLUMN_DEFS = [
   { key: "unitsShare", label: "% Units", numeric: true },
   { key: "compareSales", label: "Compare Sales", numeric: true },
   { key: "change", label: "Change", numeric: true },
-  { key: "changePct", label: "Change %", numeric: true }
+  { key: "changePct", label: "Change %", numeric: true },
+  { key: "unitChange", label: "Units Change", numeric: true },
+  { key: "unitChangePct", label: "Unit Change %", numeric: true }
 ];
 
 const PRODUCT_COLUMN_DEFS = [
@@ -121,7 +132,8 @@ const PRODUCT_COLUMN_DEFS = [
   { key: "salesShare", label: "% Sales", numeric: true },
   { key: "change", label: "Sales Change", numeric: true },
   { key: "unitChange", label: "Units Change", numeric: true },
-  { key: "changePct", label: "Change %", numeric: true }
+  { key: "changePct", label: "Change %", numeric: true },
+  { key: "unitChangePct", label: "Unit Change %", numeric: true }
 ];
 
 const METRIC_BREAKDOWN_COLUMN_DEFS = [
@@ -136,12 +148,28 @@ const METRIC_BREAKDOWN_COLUMN_DEFS = [
   { key: "changePct", label: "Change %", numeric: true }
 ];
 
+const STATUS_SPLIT_COLUMN_DEFS = [
+  { key: "value", label: "Status" },
+  { key: "netSales", label: "Net Sales", numeric: true },
+  { key: "salesShare", label: "% Sales", numeric: true },
+  { key: "netUnits", label: "Net Units", numeric: true },
+  { key: "unitsShare", label: "% Units", numeric: true },
+  { key: "orders", label: "Orders", numeric: true },
+  { key: "compareSales", label: "Compare Sales", numeric: true },
+  { key: "change", label: "Change", numeric: true },
+  { key: "unitChange", label: "Units Change", numeric: true },
+  { key: "unitChangePct", label: "Unit Change %", numeric: true },
+  { key: "changePct", label: "Change %", numeric: true }
+];
+
 const COLUMN_DEFS_BY_TABLE = {
+  status: STATUS_SPLIT_COLUMN_DEFS,
   pivot: PIVOT_COLUMN_DEFS,
   product: PRODUCT_COLUMN_DEFS
 };
 
 const DEFAULT_COLUMN_ORDERS = {
+  status: STATUS_SPLIT_COLUMN_DEFS.map((column) => column.key),
   pivot: PIVOT_COLUMN_DEFS.map((column) => column.key),
   product: PRODUCT_COLUMN_DEFS.map((column) => column.key)
 };
@@ -220,10 +248,12 @@ const state = {
   },
   periodsDirty: false,
   columnOrders: {
+    status: [],
     pivot: [],
     product: []
   },
   hiddenColumns: {
+    status: new Set(),
     pivot: new Set(),
     product: new Set()
   },
@@ -247,6 +277,7 @@ let clipTooltipFrame = null;
 let activeTrendPoint = null;
 let trendRangeDrag = null;
 let suppressTrendPointClick = false;
+let periodDateSeed = null;
 
 document.addEventListener("DOMContentLoaded", init);
 
@@ -323,6 +354,7 @@ function collectDom() {
     compareChart: document.querySelector("#compare-chart"),
     compareSummaryTbody: document.querySelector("#compare-summary-tbody"),
     fileTbody: document.querySelector("#file-tbody"),
+    statusSplitThead: document.querySelector("#status-split-thead"),
     statusSplitTbody: document.querySelector("#status-split-tbody"),
     pivotHeading: document.querySelector("#pivot-heading"),
     pivotThead: document.querySelector("#pivot-thead"),
@@ -343,6 +375,7 @@ function collectDom() {
     appShell: document.querySelector(".app-shell"),
     toggleProductResults: document.querySelector("#toggle-product-results"),
     showProductResults: document.querySelector("#show-product-results"),
+    statusColumnList: document.querySelector("#status-column-list"),
     pivotColumnList: document.querySelector("#pivot-column-list"),
     productColumnList: document.querySelector("#product-column-list"),
     regionalProductRegion: document.querySelector("#regional-product-region"),
@@ -401,8 +434,11 @@ function bindEvents() {
   dom.pivotNameFilterHideVisible?.addEventListener("click", hideVisiblePivotNames);
 
   [dom.currentStart, dom.currentEnd, dom.compareStart, dom.compareEnd].forEach((input) => {
+    input.addEventListener("pointerdown", handlePeriodDatePickerOpen);
+    input.addEventListener("focus", handlePeriodDatePickerOpen);
     input.addEventListener("input", handlePeriodInputChange);
     input.addEventListener("change", handlePeriodInputChange);
+    input.addEventListener("blur", restoreUncommittedPeriodDateSeed);
   });
 
   dom.filters.addEventListener("input", handleFilterInput);
@@ -1054,10 +1090,13 @@ function populateDimensionSelect() {
 }
 
 function initializeColumnOrders() {
+  state.columnOrders.status = loadColumnOrder("status");
   state.columnOrders.pivot = loadColumnOrder("pivot");
   state.columnOrders.product = loadColumnOrder("product");
+  state.hiddenColumns.status = loadHiddenColumns("status");
   state.hiddenColumns.pivot = loadHiddenColumns("pivot");
   state.hiddenColumns.product = loadHiddenColumns("product");
+  migrateColumnSettings();
 }
 
 function loadColumnOrder(table) {
@@ -1117,6 +1156,32 @@ function normalizeHiddenColumns(table, hidden) {
   return normalized;
 }
 
+function migrateColumnSettings() {
+  let version = 0;
+  try {
+    version = Number(localStorage.getItem(COLUMN_SETTINGS_VERSION_STORAGE_KEY) || 0);
+  } catch (error) {
+    console.warn("Could not read column settings version.", error);
+  }
+
+  if (version >= COLUMN_SETTINGS_VERSION) return;
+
+  Object.entries(COLUMN_SETTINGS_MIGRATION_VISIBLE_KEYS).forEach(([table, keys]) => {
+    const hidden = state.hiddenColumns[table] || new Set();
+    keys.forEach((key) => hidden.delete(key));
+    state.hiddenColumns[table] = normalizeHiddenColumns(table, hidden);
+    state.columnOrders[table] = normalizeColumnOrder(table, state.columnOrders[table] || []);
+    saveHiddenColumns(table);
+    saveColumnOrder(table);
+  });
+
+  try {
+    localStorage.setItem(COLUMN_SETTINGS_VERSION_STORAGE_KEY, String(COLUMN_SETTINGS_VERSION));
+  } catch (error) {
+    console.warn("Could not save column settings version.", error);
+  }
+}
+
 function normalizeColumnOrder(table, order) {
   const defaults = DEFAULT_COLUMN_ORDERS[table] || [];
   const validKeys = new Set(defaults);
@@ -1143,7 +1208,13 @@ function getTableColumns(table) {
   state.columnOrders[table] = order;
   const hidden = normalizeHiddenColumns(table, state.hiddenColumns[table] || new Set());
   state.hiddenColumns[table] = hidden;
-  return order.map((key) => byKey.get(key)).filter((column) => column && !hidden.has(column.key));
+  const columns = order.map((key) => byKey.get(key)).filter((column) => column && !hidden.has(column.key));
+  if (!columns.length && defs.length) {
+    state.hiddenColumns[table] = new Set();
+    saveHiddenColumns(table);
+    return order.map((key) => byKey.get(key)).filter(Boolean);
+  }
+  return columns;
 }
 
 function getOrderedColumnDefs(table) {
@@ -1166,8 +1237,7 @@ function moveColumn(table, key, direction) {
   state.columnOrders[table] = order;
   saveColumnOrder(table);
   renderColumnSettings();
-  renderPivotOutputs();
-  renderProductTable(state.productRows);
+  renderColumnsChangedTable(table);
 }
 
 function reorderColumn(table, sourceKey, targetKey, position) {
@@ -1184,8 +1254,7 @@ function reorderColumn(table, sourceKey, targetKey, position) {
   state.columnOrders[table] = order;
   saveColumnOrder(table);
   renderColumnSettings();
-  renderPivotOutputs();
-  renderProductTable(state.productRows);
+  renderColumnsChangedTable(table);
 }
 
 function resetColumnOrder(table) {
@@ -1195,8 +1264,7 @@ function resetColumnOrder(table) {
   saveColumnOrder(table);
   saveHiddenColumns(table);
   renderColumnSettings();
-  renderPivotOutputs();
-  renderProductTable(state.productRows);
+  renderColumnsChangedTable(table);
 }
 
 function setColumnVisible(table, key, visible) {
@@ -1218,13 +1286,27 @@ function setColumnVisible(table, key, visible) {
   state.hiddenColumns[table] = normalizeHiddenColumns(table, state.hiddenColumns[table]);
   saveHiddenColumns(table);
   renderColumnSettings();
-  renderPivotOutputs();
-  renderProductTable(state.productRows);
+  renderColumnsChangedTable(table);
 }
 
 function renderColumnSettings() {
+  renderColumnOrderList("status", dom.statusColumnList);
   renderColumnOrderList("pivot", dom.pivotColumnList);
   renderColumnOrderList("product", dom.productColumnList);
+}
+
+function renderColumnsChangedTable(table) {
+  if (table === "status") {
+    renderStatusSplitTable(state.statusRows, state.statusTotals);
+    return;
+  }
+  if (table === "pivot") {
+    renderPivotOutputs();
+    return;
+  }
+  if (table === "product") {
+    renderProductTable(state.productRows);
+  }
 }
 
 function renderColumnOrderList(table, target) {
@@ -1281,54 +1363,50 @@ async function loadRepositoryData({ forceRefresh = false } = {}) {
   const manifest = await fetchRepositoryManifest();
   const files = normalizeManifestFiles(manifest);
   const compiled = await readCompiledRepositoryData(files);
-  if (compiled) {
+  if (compiled?.records) {
     applyCompiledRepositoryData(compiled);
     return;
   }
 
+  const compiledFilesByPath = getCompiledFileMap(compiled);
   const records = [];
   const fileMetas = [];
   const cacheKeys = [];
 
   for (const file of files) {
     const sourceHash = `repo:${file.path}`;
-    setStatus(`Checking ${file.name}...`, "busy");
-    const signature = await getRepositoryFileSignature(file);
-    const cacheKey = signature ? getParsedFileCacheKey(file, signature) : "";
-    if (cacheKey) cacheKeys.push(cacheKey);
+    let addedRecords = null;
+    let fileMeta = null;
+    const compiledFile = getMatchingCompiledFile(compiledFilesByPath, file);
 
-    let parsed = cacheKey && !forceRefresh ? await readCachedParsedFile(cacheKey) : null;
-    if (parsed) {
-      setStatus(`Using cached data for ${file.name}...`, "busy");
-      await pause();
-    } else {
-      setStatus(`Loading ${file.name}...`, "busy");
-      const response = await fetch(withCacheBust(file.path), { cache: "no-store" });
-      if (!response.ok) {
-        throw new Error(`Could not load ${file.path} (${response.status}). Check data/manifest.json and the file path.`);
+    if (compiledFile) {
+      try {
+        setStatus(`Using compiled data for ${file.name}...`, "busy");
+        const compiledRecords = await loadCompiledDataFile(compiledFile);
+        addedRecords = compiledRecords.map(hydrateRecord);
+        fileMeta = buildRepositoryFileMeta(file, compiledFile, addedRecords, "Compiled data");
+      } catch (error) {
+        console.warn(`Could not load compiled data for ${file.path}. Falling back to CSV.`, error);
+        addedRecords = null;
+        fileMeta = null;
       }
-
-      const buffer = await response.arrayBuffer();
-      parsed = await parseRepositoryFile(buffer, file, response, sourceHash, (message) => setStatus(message, "busy"));
-      if (cacheKey) await writeCachedParsedFile(cacheKey, parsed);
     }
 
-    const addedRecords = parsed.records.map(hydrateRecord);
-    appendItems(records, addedRecords);
+    if (!addedRecords) {
+      const parsed = await loadParsedRepositoryFile(file, sourceHash, forceRefresh, cacheKeys);
+      addedRecords = parsed.records.map(hydrateRecord);
+      fileMeta = buildRepositoryFileMeta(file, {
+        hash: sourceHash,
+        rowsRead: parsed.records.length,
+        rowsAdded: addedRecords.length,
+        rowsSkipped: 0,
+        minDate: parsed.minDate,
+        maxDate: parsed.maxDate
+      }, addedRecords, "Repository");
+    }
 
-    fileMetas.push({
-      hash: sourceHash,
-      name: file.name,
-      path: file.path,
-      source: "Repository",
-      rowsRead: parsed.records.length,
-      rowsAdded: addedRecords.length,
-      rowsSkipped: 0,
-      minDate: parsed.minDate,
-      maxDate: parsed.maxDate,
-      netSales: sum(addedRecords, "netSales"),
-      netUnits: sum(addedRecords, "netUnits")
-    });
+    appendItems(records, addedRecords);
+    fileMetas.push(fileMeta);
   }
 
   state.records = records;
@@ -1336,6 +1414,60 @@ async function loadRepositoryData({ forceRefresh = false } = {}) {
   state.files = fileMetas;
   state.rowKeys = buildRowKeySet(records);
   pruneParsedFileCache(cacheKeys);
+}
+
+async function loadParsedRepositoryFile(file, sourceHash, forceRefresh, cacheKeys) {
+  setStatus(`Checking ${file.name}...`, "busy");
+  const signature = await getRepositoryFileSignature(file);
+  const cacheKey = signature ? getParsedFileCacheKey(file, signature) : "";
+  if (cacheKey) cacheKeys.push(cacheKey);
+
+  const cached = cacheKey && !forceRefresh ? await readCachedParsedFile(cacheKey) : null;
+  if (cached) {
+    setStatus(`Using cached data for ${file.name}...`, "busy");
+    await pause();
+    return cached;
+  }
+
+  setStatus(`Loading ${file.name}...`, "busy");
+  const response = await fetch(withCacheBust(file.path), { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`Could not load ${file.path} (${response.status}). Check data/manifest.json and the file path.`);
+  }
+
+  const buffer = await response.arrayBuffer();
+  const parsed = await parseRepositoryFile(buffer, file, response, sourceHash, (message) => setStatus(message, "busy"));
+  if (cacheKey) await writeCachedParsedFile(cacheKey, parsed);
+  return parsed;
+}
+
+function buildRepositoryFileMeta(file, sourceMeta, records, source) {
+  const dateSummary = summarizeRecordDates(records);
+  return {
+    hash: sourceMeta?.hash || `repo:${file.path}`,
+    name: file.name,
+    path: file.path,
+    version: file.version || sourceMeta?.version || "",
+    source,
+    rowsRead: Number(sourceMeta?.rowsRead ?? sourceMeta?.rowsAdded ?? records.length) || records.length,
+    rowsAdded: records.length,
+    rowsSkipped: Number(sourceMeta?.rowsSkipped || 0),
+    minDate: sourceMeta?.minDate || dateSummary.min,
+    maxDate: sourceMeta?.maxDate || dateSummary.max,
+    netSales: sum(records, "netSales"),
+    netUnits: sum(records, "netUnits")
+  };
+}
+
+function summarizeRecordDates(records) {
+  let min = "";
+  let max = "";
+  records.forEach((record) => {
+    if (!record.dateKey) return;
+    if (!min || record.dateKey < min) min = record.dateKey;
+    if (!max || record.dateKey > max) max = record.dateKey;
+  });
+  return { min, max };
 }
 
 async function fetchRepositoryManifest() {
@@ -1381,13 +1513,25 @@ async function readCompiledRepositoryData(files) {
       console.warn("Compiled data schema is outdated. Falling back to CSV parsing.");
       return null;
     }
-    if (compiled.manifestSignature !== expectedSignature) {
+
+    const signaturesMatch = compiled.manifestSignature === expectedSignature;
+    if (hasPerFileCompiledData(compiled)) {
+      if (!signaturesMatch) {
+        console.warn("Compiled data does not fully match data/manifest.json. Using matching compiled files and CSV fallback.");
+      }
+      return {
+        ...compiled,
+        records: null,
+        partial: !signaturesMatch
+      };
+    }
+
+    if (!signaturesMatch) {
       console.warn("Compiled data does not match data/manifest.json. Falling back to CSV parsing.");
       return null;
     }
-    if (hasPerFileCompiledData(compiled)) {
-      compiled.records = await loadCompiledDataFiles(compiled.files);
-    } else if (Array.isArray(compiled.chunks) && compiled.chunks.length) {
+
+    if (Array.isArray(compiled.chunks) && compiled.chunks.length) {
       compiled.records = await loadCompiledDataChunks(compiled.chunks);
     }
     if (!Array.isArray(compiled.records)) {
@@ -1405,26 +1549,54 @@ function hasPerFileCompiledData(compiled) {
   return Array.isArray(compiled?.files) && compiled.files.some((file) => cleanText(file?.compiledPath));
 }
 
+function getCompiledFileMap(compiled) {
+  const map = new Map();
+  if (!hasPerFileCompiledData(compiled)) return map;
+  compiled.files.forEach((file) => {
+    const filePath = cleanText(file?.path);
+    const compiledPath = cleanText(file?.compiledPath);
+    if (filePath && compiledPath) map.set(filePath, file);
+  });
+  return map;
+}
+
+function getMatchingCompiledFile(compiledFilesByPath, file) {
+  const compiledFile = compiledFilesByPath.get(file.path);
+  if (!compiledFile) return null;
+
+  const manifestVersion = cleanText(file.version);
+  const compiledVersion = cleanText(compiledFile.version);
+  if (manifestVersion && manifestVersion !== compiledVersion) return null;
+
+  return compiledFile;
+}
+
 async function loadCompiledDataFiles(files) {
   const records = [];
   for (const file of files) {
-    const compiledPath = cleanText(file?.compiledPath);
-    if (!compiledPath) continue;
-    setStatus(`Loading compiled data for ${file.name || file.path || "file"}...`, "busy");
-    const response = await fetch(withCacheBust(compiledPath), { cache: "no-store" });
-    if (!response.ok) {
-      throw new Error(`Could not load compiled data file ${compiledPath} (${response.status}).`);
-    }
-    const payload = await response.json();
-    const fields = Array.isArray(payload.fields) && payload.fields.length ? payload.fields : COMPILED_RECORD_FIELDS;
-    if (!Array.isArray(payload.records)) {
-      throw new Error(`Compiled data file ${compiledPath} has no records array.`);
-    }
-    const expandedRecords = payload.records.map((entry) => expandCompiledRecord(entry, fields, payload));
+    const expandedRecords = await loadCompiledDataFile(file);
     appendItems(records, expandedRecords);
     await pause();
   }
   return records;
+}
+
+async function loadCompiledDataFile(file) {
+  const compiledPath = cleanText(file?.compiledPath);
+  if (!compiledPath) return [];
+
+  setStatus(`Loading compiled data for ${file.name || file.path || "file"}...`, "busy");
+  const response = await fetch(withCacheBust(compiledPath), { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`Could not load compiled data file ${compiledPath} (${response.status}).`);
+  }
+
+  const payload = await response.json();
+  const fields = Array.isArray(payload.fields) && payload.fields.length ? payload.fields : COMPILED_RECORD_FIELDS;
+  if (!Array.isArray(payload.records)) {
+    throw new Error(`Compiled data file ${compiledPath} has no records array.`);
+  }
+  return payload.records.map((entry) => expandCompiledRecord(entry, fields, payload));
 }
 
 async function loadCompiledDataChunks(chunks) {
@@ -2373,7 +2545,85 @@ function getFilterToggleButtonLabel(key) {
   return state.filterAllSelected[key] ? "Deselect All" : "Select All";
 }
 
-function handlePeriodInputChange() {
+function handlePeriodDatePickerOpen(event) {
+  const input = event.currentTarget;
+  if (!(input instanceof HTMLInputElement)) return;
+  seedPeriodDateInputMonth(input);
+}
+
+function seedPeriodDateInputMonth(input) {
+  const peer = getPeriodPeerInput(input);
+  if (!peer?.value) return;
+  if (sameDateMonth(input.value, peer.value)) return;
+
+  if (periodDateSeed?.input === input) return;
+  restoreUncommittedPeriodDateSeed();
+
+  const seededValue = getMonthAlignedDateValue(input.value, peer.value);
+  if (!seededValue || seededValue === input.value) return;
+
+  periodDateSeed = {
+    input,
+    originalValue: input.value,
+    seededValue,
+    committed: false
+  };
+  input.value = seededValue;
+}
+
+function restoreUncommittedPeriodDateSeed(event) {
+  if (!periodDateSeed) return;
+  if (event?.currentTarget && event.currentTarget !== periodDateSeed.input) return;
+
+  const seed = periodDateSeed;
+  periodDateSeed = null;
+  if (!seed.committed && seed.input.value === seed.seededValue) {
+    seed.input.value = seed.originalValue;
+  }
+}
+
+function commitPeriodDateSeed(input) {
+  if (!periodDateSeed || periodDateSeed.input !== input) return;
+  periodDateSeed.committed = true;
+  periodDateSeed = null;
+}
+
+function getPeriodPeerInput(input) {
+  if (input === dom.currentStart) return dom.currentEnd;
+  if (input === dom.currentEnd) return dom.currentStart;
+  if (input === dom.compareStart) return dom.compareEnd;
+  if (input === dom.compareEnd) return dom.compareStart;
+  return null;
+}
+
+function sameDateMonth(left, right) {
+  return Boolean(left && right && left.slice(0, 7) === right.slice(0, 7));
+}
+
+function getMonthAlignedDateValue(targetValue, peerValue) {
+  const peer = parseDateParts(peerValue);
+  if (!peer) return "";
+  const target = parseDateParts(targetValue) || peer;
+  const day = Math.min(target.day, daysInMonth(peer.year, peer.month));
+  return `${peer.year}-${String(peer.month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function parseDateParts(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || "");
+  if (!match) return null;
+  return {
+    year: Number(match[1]),
+    month: Number(match[2]),
+    day: Number(match[3])
+  };
+}
+
+function daysInMonth(year, month) {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function handlePeriodInputChange(event) {
+  commitPeriodDateSeed(event?.currentTarget);
   state.dateTouched = true;
   clearTrendSelectionState();
   markPeriodsDirty();
@@ -3564,6 +3814,7 @@ function buildPivot(currentRecords, comparisonRecords, hasComparison) {
     const current = currentMap.get(value) || emptyAggregate();
     const comparison = compareMap.get(value) || emptyAggregate();
     const change = hasComparison ? current.netSales - comparison.netSales : null;
+    const unitChange = hasComparison ? current.netUnits - comparison.netUnits : null;
 
     return {
       value,
@@ -3577,7 +3828,9 @@ function buildPivot(currentRecords, comparisonRecords, hasComparison) {
       compareSales: hasComparison ? comparison.netSales : null,
       compareUnits: hasComparison ? comparison.netUnits : null,
       change,
-      changePct: hasComparison ? percentChange(current.netSales, comparison.netSales) : null
+      unitChange,
+      changePct: hasComparison ? percentChange(current.netSales, comparison.netSales) : null,
+      unitChangePct: hasComparison ? percentChange(current.netUnits, comparison.netUnits) : null
     };
   });
 
@@ -3614,7 +3867,8 @@ function buildStatusSplit(currentRecords, comparisonRecords, hasComparison) {
       compareUnits: hasComparison ? comparison.netUnits : null,
       change,
       unitChange,
-      changePct: hasComparison ? percentChange(current.netSales, comparison.netSales) : null
+      changePct: hasComparison ? percentChange(current.netSales, comparison.netSales) : null,
+      unitChangePct: hasComparison ? percentChange(current.netUnits, comparison.netUnits) : null
     };
   });
 
@@ -3632,7 +3886,8 @@ function buildStatusSplit(currentRecords, comparisonRecords, hasComparison) {
       compareUnits: totalCompareUnits,
       change: hasComparison ? totalSales - totalCompareSales : null,
       unitChange: hasComparison ? totalUnits - totalCompareUnits : null,
-      changePct: hasComparison ? percentChange(totalSales, totalCompareSales) : null
+      changePct: hasComparison ? percentChange(totalSales, totalCompareSales) : null,
+      unitChangePct: hasComparison ? percentChange(totalUnits, totalCompareUnits) : null
     }
   };
 }
@@ -3769,9 +4024,26 @@ function renderFiles() {
 
 function renderStatusSplitTable(rows, totals = null) {
   if (!dom.statusSplitTbody) return;
-  renderMetricBreakdownTable(dom.statusSplitTbody, rows, totals, "No status results for the selected period and filters", {
-    includeUnitChange: true
-  });
+  const columns = getTableColumns("status");
+  renderStatusSplitHeader(columns);
+  if (!rows.length) {
+    dom.statusSplitTbody.innerHTML = `<tr><td colspan="${columns.length}">No status results for the selected period and filters</td></tr>`;
+    return;
+  }
+
+  dom.statusSplitTbody.innerHTML = [
+    ...rows.map((row) => renderStatusSplitRow(row, false, columns)),
+    totals ? renderStatusSplitRow(totals, true, columns) : ""
+  ].join("");
+}
+
+function renderStatusSplitHeader(columns = getTableColumns("status")) {
+  if (!dom.statusSplitThead) return;
+  dom.statusSplitThead.innerHTML = `<tr>${columns.map(renderPlainTableHeader).join("")}</tr>`;
+}
+
+function renderPlainTableHeader(column) {
+  return `<th class="${tableCellClass(column)}">${escapeHtml(column.label)}</th>`;
 }
 
 function getMetricBreakdownColumns(firstLabel) {
@@ -3813,7 +4085,7 @@ function sortMetricBreakdownRows(rows, table) {
 
 function renderMetricBreakdownTable(target, rows, totals = null, emptyMessage = "No results for the selected period and filters", options = {}) {
   if (!target) return;
-  const columnCount = options.includeUnitChange ? 10 : 9;
+  const columnCount = 9;
   if (!rows.length) {
     target.innerHTML = `<tr><td colspan="${columnCount}">${escapeHtml(emptyMessage)}</td></tr>`;
     return;
@@ -3822,16 +4094,13 @@ function renderMetricBreakdownTable(target, rows, totals = null, emptyMessage = 
   const totalRow = totals || null;
 
   target.innerHTML = [
-    ...rows.map((row) => renderStatusSplitRow(row, false, options)),
-    totalRow ? renderStatusSplitRow(totalRow, true, options) : ""
+    ...rows.map((row) => renderMetricBreakdownRow(row)),
+    totalRow ? renderMetricBreakdownRow(totalRow, true) : ""
   ].join("");
 }
 
-function renderStatusSplitRow(row, isTotal = false, options = {}) {
+function renderMetricBreakdownRow(row, isTotal = false) {
   const rowClass = isTotal ? ` class="total-row"` : "";
-  const unitChangeCell = options.includeUnitChange
-    ? `<td class="numeric ${getDeltaClass(row, "unitChange")}">${row.hasComparison ? formatNumber(row.unitChange) : ""}</td>`
-    : "";
   return `
     <tr${rowClass}>
       <td>${isTotal ? escapeHtml(row.value) : renderClip(row.value)}</td>
@@ -3842,10 +4111,38 @@ function renderStatusSplitRow(row, isTotal = false, options = {}) {
       <td class="numeric">${formatNumber(row.orders)}</td>
       <td class="numeric">${row.hasComparison ? formatCurrency(row.compareSales) : ""}</td>
       <td class="numeric ${getDeltaClass(row, "change")}">${row.hasComparison ? formatCurrency(row.change) : ""}</td>
-      ${unitChangeCell}
       <td class="numeric ${getDeltaClass(row, "changePct")}">${row.hasComparison ? (row.changePct === null ? "n/a" : formatPercent(row.changePct)) : ""}</td>
     </tr>
   `;
+}
+
+function renderStatusSplitRow(row, isTotal = false, columns = getTableColumns("status")) {
+  const rowClass = isTotal ? ` class="total-row"` : "";
+  return `
+    <tr${rowClass}>
+      ${columns.map((column) => renderStatusSplitCell(row, column, isTotal)).join("")}
+    </tr>
+  `;
+}
+
+function renderStatusSplitCell(row, column, isTotal = false) {
+  if (column.key === "value") {
+    return `<td class="${tableCellClass(column)}">${isTotal ? escapeHtml(row.value) : renderClip(row.value)}</td>`;
+  }
+
+  let value = "";
+  if (column.key === "netSales") value = formatCurrency(row.netSales);
+  if (column.key === "salesShare") value = formatPercent(row.salesShare);
+  if (column.key === "netUnits") value = formatNumber(row.netUnits);
+  if (column.key === "unitsShare") value = formatPercent(row.unitsShare);
+  if (column.key === "orders") value = formatNumber(row.orders);
+  if (column.key === "compareSales") value = row.hasComparison ? formatCurrency(row.compareSales) : "";
+  if (column.key === "change") value = row.hasComparison ? formatCurrency(row.change) : "";
+  if (column.key === "unitChange") value = row.hasComparison ? formatNumber(row.unitChange) : "";
+  if (column.key === "unitChangePct") value = row.hasComparison ? (row.unitChangePct === null ? "n/a" : formatPercent(row.unitChangePct)) : "";
+  if (column.key === "changePct") value = row.hasComparison ? (row.changePct === null ? "n/a" : formatPercent(row.changePct)) : "";
+
+  return `<td class="${tableCellClass(column, getDeltaClass(row, column.key))}">${value}</td>`;
 }
 
 function renderPivotOutputs() {
@@ -4029,14 +4326,16 @@ function formatPivotCellValue(row, key) {
   if (key === "unitsShare") return formatPercent(row.unitsShare);
   if (key === "compareSales") return row.hasComparison ? formatCurrency(row.compareSales) : "";
   if (key === "change") return row.hasComparison ? formatCurrency(row.change) : "";
+  if (key === "unitChange") return row.hasComparison ? formatNumber(row.unitChange) : "";
+  if (key === "unitChangePct") return row.hasComparison ? (row.unitChangePct === null ? "n/a" : formatPercent(row.unitChangePct)) : "";
   if (key === "changePct") return row.hasComparison ? (row.changePct === null ? "n/a" : formatPercent(row.changePct)) : "";
   return "";
 }
 
 function getDeltaClass(row, key) {
   if (!row.hasComparison) return "";
-  const value = key === "unitChange" ? row.unitChange : row.change;
-  if (key !== "change" && key !== "changePct" && key !== "unitChange") return "";
+  const value = key === "unitChange" || key === "unitChangePct" ? row.unitChange : row.change;
+  if (key !== "change" && key !== "changePct" && key !== "unitChange" && key !== "unitChangePct") return "";
   if (value > 0) return "delta-positive";
   if (value < 0) return "delta-negative";
   return "";
@@ -4066,7 +4365,8 @@ function buildProductResults(records, comparisonRecords = [], hasComparison = fa
         compareUnits: hasComparison ? comparison.netUnits : null,
         change,
         unitChange,
-        changePct: hasComparison ? percentChange(current.netSales, comparison.netSales) : null
+        changePct: hasComparison ? percentChange(current.netSales, comparison.netSales) : null,
+        unitChangePct: hasComparison ? percentChange(current.netUnits, comparison.netUnits) : null
       };
     })
     .sort((a, b) => b.netSales - a.netSales || collator.compare(a.productTitle, b.productTitle));
@@ -4230,7 +4530,7 @@ function renderProductTable(rows) {
 
   bodyRows.push(`
     <tr class="total-row">
-      ${columns.map((column) => renderProductTotalCell(column, { totalSales, totalUnits, hasComparison, totalChange, totalUnitChange, totalChangePct })).join("")}
+      ${columns.map((column) => renderProductTotalCell(column, { totalSales, totalUnits, totalCompareUnits, hasComparison, totalChange, totalUnitChange, totalChangePct })).join("")}
     </tr>
   `);
 
@@ -4253,6 +4553,7 @@ function formatProductCellValue(row, key) {
   if (key === "change") return row.hasComparison ? formatCurrency(row.change) : "";
   if (key === "unitChange") return row.hasComparison ? formatNumber(row.unitChange) : "";
   if (key === "changePct") return row.hasComparison ? (row.changePct === null ? "n/a" : formatPercent(row.changePct)) : "";
+  if (key === "unitChangePct") return row.hasComparison ? (row.unitChangePct === null ? "n/a" : formatPercent(row.unitChangePct)) : "";
   return "";
 }
 
@@ -4267,6 +4568,10 @@ function renderProductTotalCell(column, totals) {
   if (column.key === "change") value = totals.hasComparison ? formatCurrency(totals.totalChange) : "";
   if (column.key === "unitChange") value = totals.hasComparison ? formatNumber(totals.totalUnitChange) : "";
   if (column.key === "changePct") value = totals.hasComparison ? (totals.totalChangePct === null ? "n/a" : formatPercent(totals.totalChangePct)) : "";
+  if (column.key === "unitChangePct") {
+    const unitChangePct = totals.hasComparison ? percentChange(totals.totalUnits, totals.totalCompareUnits) : null;
+    value = totals.hasComparison ? (unitChangePct === null ? "n/a" : formatPercent(unitChangePct)) : "";
+  }
   return `<td class="${tableCellClass(column)}">${value}</td>`;
 }
 
@@ -5150,6 +5455,8 @@ function getPivotExportValue(row, key) {
   if (key === "unitsShare") return row.unitsShare;
   if (key === "compareSales") return row.hasComparison ? row.compareSales : "";
   if (key === "change") return row.hasComparison ? row.change : "";
+  if (key === "unitChange") return row.hasComparison ? row.unitChange : "";
+  if (key === "unitChangePct") return row.hasComparison ? (row.unitChangePct === null ? "n/a" : row.unitChangePct) : "";
   if (key === "changePct") return row.hasComparison ? (row.changePct === null ? "n/a" : row.changePct) : "";
   return "";
 }
@@ -5163,6 +5470,7 @@ function getProductExportValue(row, key) {
   if (key === "salesShare") return row.salesShare;
   if (key === "change") return row.hasComparison ? row.change : "";
   if (key === "unitChange") return row.hasComparison ? row.unitChange : "";
+  if (key === "unitChangePct") return row.hasComparison ? (row.unitChangePct === null ? "n/a" : row.unitChangePct) : "";
   if (key === "changePct") return row.hasComparison ? (row.changePct === null ? "n/a" : row.changePct) : "";
   return "";
 }
