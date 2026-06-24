@@ -68,6 +68,8 @@
                 <option value="salesShare">Sales %</option>
                 <option value="change">Sales Change</option>
                 <option value="changePct">Change %</option>
+                <option value="unitChange">Units Change</option>
+                <option value="unitChangePct">Unit Change %</option>
                 <option value="status">Status</option>
                 <option value="value">Name</option>
               </select>
@@ -185,19 +187,7 @@
               </div>
               <div class="table-scroll tight">
                 <table class="status-split-table">
-                  <thead>
-                    <tr>
-                      <th>Status</th>
-                      <th>Net Sales</th>
-                      <th>% Sales</th>
-                      <th>Net Units</th>
-                      <th>% Units</th>
-                      <th>Orders</th>
-                      <th>Compare Sales</th>
-                      <th>Change</th>
-                      <th>Change %</th>
-                    </tr>
-                  </thead>
+                  <thead id="status-split-thead"></thead>
                   <tbody id="status-split-tbody"></tbody>
                 </table>
               </div>
@@ -441,19 +431,7 @@
               </div>
               <div class="table-scroll tight">
                 <table class="status-split-table">
-                  <thead>
-                    <tr>
-                      <th>Brand</th>
-                      <th>Net Sales</th>
-                      <th>% Sales</th>
-                      <th>Net Units</th>
-                      <th>% Units</th>
-                      <th>Orders</th>
-                      <th>Compare Sales</th>
-                      <th>Change</th>
-                      <th>Change %</th>
-                    </tr>
-                  </thead>
+                  <thead id="regional-brand-thead"></thead>
                   <tbody id="regional-brand-tbody"></tbody>
                 </table>
               </div>
@@ -468,19 +446,7 @@
               </div>
               <div class="table-scroll tight">
                 <table class="status-split-table">
-                  <thead>
-                    <tr>
-                      <th>Franchise</th>
-                      <th>Net Sales</th>
-                      <th>% Sales</th>
-                      <th>Net Units</th>
-                      <th>% Units</th>
-                      <th>Orders</th>
-                      <th>Compare Sales</th>
-                      <th>Change</th>
-                      <th>Change %</th>
-                    </tr>
-                  </thead>
+                  <thead id="regional-franchise-thead"></thead>
                   <tbody id="regional-franchise-tbody"></tbody>
                 </table>
               </div>
@@ -499,6 +465,7 @@
 
             <div class="settings-tabs" role="tablist" aria-label="Settings sections">
               <button class="settings-tab active" type="button" role="tab" aria-selected="true" data-settings-tab="data">Data</button>
+              <button class="settings-tab" type="button" role="tab" aria-selected="false" data-settings-tab="status-columns">Status Columns</button>
               <button class="settings-tab" type="button" role="tab" aria-selected="false" data-settings-tab="pivot-columns">Pivot Columns</button>
               <button class="settings-tab" type="button" role="tab" aria-selected="false" data-settings-tab="product-columns">Product Columns</button>
             </div>
@@ -520,6 +487,13 @@
                   <tbody id="file-tbody"></tbody>
                 </table>
               </div>
+            </section>
+
+            <section class="settings-view" data-settings-panel="status-columns" role="tabpanel" hidden>
+              <div class="settings-actions">
+                <button class="button compact" type="button" data-column-reset="status">Reset Status Columns</button>
+              </div>
+              <div id="status-column-list" class="column-order-list" aria-label="Status column order"></div>
             </section>
 
             <section class="settings-view" data-settings-panel="pivot-columns" role="tabpanel" hidden>
