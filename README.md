@@ -4,10 +4,10 @@ A static product performance dashboard for weekly sales CSV exports. It can be h
 
 ## What It Does
 
-- Loads shared `.csv` sales files listed in `data/manifest.json`.
+- Loads shared sales files listed in `data/manifest.json`.
 - Uses a black workspace with a yellow `#ffdd00` primary accent.
 - References Gotham Ultra for primary headings and Gotham Bold for secondary UI text when those fonts are installed locally.
-- Reads each CSV file directly from the GitHub repository.
+- Uses compiled JSON data on GitHub Pages for faster startup, with CSV fallback for local development or missing compiled files.
 - De-duplicates repeated rows by row key across repository files.
 - Filters and pivots by:
   - Shipping Province
@@ -65,10 +65,11 @@ http://localhost:8080
 ## GitHub Pages
 
 1. Create a new GitHub repository.
-2. Upload `index.html`, `styles.css`, `app.js`, `.nojekyll`, the `data/` folder, and this `README.md`.
+2. Upload the repository files, including `.github/workflows/pages.yml`, `tools/`, `index.html`, `styles.css`, `app.js`, `.nojekyll`, `data/`, and this `README.md`.
 3. In GitHub, go to `Settings` > `Pages`.
-4. Set the source to your main branch and root folder.
-5. Open the published Pages URL.
+4. Set the source to `GitHub Actions`.
+5. Commit to `main` or `master`, or run the `Build and Deploy Pages` workflow manually.
+6. Open the published Pages URL.
 
 Use the GitHub Pages URL, not the normal GitHub repository file preview. The Pages URL usually looks like:
 
@@ -87,8 +88,9 @@ To add or refresh data:
 1. Export the source file's sales sheet as a CSV file. In the source workbook, that sheet can be named to match the file name; the dashboard reads the CSV headers and does not need a worksheet tab name.
 2. Add the CSV file to the `data/` folder.
 3. Add an entry for the CSV file in `data/manifest.json`.
-4. Commit and push the changes to GitHub.
-5. Wait for GitHub Pages to redeploy, then use `Refresh Data` in the dashboard.
+4. Commit and push the CSV and manifest changes to GitHub.
+5. The GitHub Actions workflow builds compiled JSON and publishes a lean Pages artifact automatically.
+6. Wait for GitHub Pages to redeploy, then use `Refresh Data` in the dashboard.
 
 Example `data/manifest.json`:
 
@@ -113,17 +115,19 @@ The static dashboard cannot write uploads back to GitHub by itself; data file ma
 
 Only list CSV files that actually exist in the repository. If a manifest entry points to a missing file, the dashboard will stop and show the missing path so the shared dataset does not load partially by accident.
 
-The dashboard caches parsed CSV data in the browser with IndexedDB. The first load still downloads and parses the files, but later visits can reuse cached parsed records. If you replace a CSV without changing its file path, update that manifest entry's `version` so every browser knows to refresh its cache.
+The dashboard caches compiled and parsed data in the browser with IndexedDB. If you replace a CSV without changing its file path, update that manifest entry's `version` so every browser knows to refresh its cache.
 
 ## Faster Startup With Compiled Data
 
-For faster GitHub Pages startup, generate `data/compiled-data.json` after updating CSV files:
+For local testing, you can generate `data/compiled-data.json` after updating CSV files:
 
 ```powershell
 node tools/build-compiled-data.js
 ```
 
-Commit `data/compiled-data.json` and the generated files in `data/compiled/` with the CSV and manifest changes. The compiler creates one compiled JSON file per source CSV, so a normal weekly append only adds one new compiled file plus the refreshed `data/compiled-data.json` index. When the compiled files match `data/manifest.json`, the dashboard loads them instead of parsing every CSV in the browser. If the compiled data is missing or stale, the dashboard falls back to the CSV files automatically.
+On GitHub Pages, `.github/workflows/pages.yml` runs this compiler automatically before deployment. The workflow publishes only the dashboard files, `data/manifest.json`, `data/compiled-data.json`, and `data/compiled/*.json`; raw CSV files stay in the repository but are not included in the Pages artifact. This keeps the deployed site smaller and avoids re-publishing the full CSV history on every update.
+
+The compiler creates one compiled JSON file per source CSV, so a normal weekly append only creates one new compiled file plus a refreshed `data/compiled-data.json` index. When the compiled files match `data/manifest.json`, the dashboard loads them instead of parsing every CSV in the browser. If the compiled data is missing or stale in local development, the dashboard falls back to the CSV files automatically.
 
 ## Troubleshooting Data Files
 
