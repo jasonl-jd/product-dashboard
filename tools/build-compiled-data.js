@@ -12,6 +12,7 @@ const OUTPUT_PATH = path.join(DATA_DIR, "compiled-data.json");
 const COMPILED_DATA_SCHEMA_VERSION = 1;
 const BLANK = "(blank)";
 const UNASSIGNED_ATTRIBUTE_VALUES = new Set(["false"]);
+const CUSTOMER_TYPE_VALUES = new Set(["first time customer", "returning customer"]);
 
 const DIMENSIONS = [
   { key: "shippingProvince", label: "Shipping Province", headers: ["Shipping Province"] },
@@ -90,9 +91,10 @@ function main() {
     const filePath = path.join(ROOT, ...file.path.split(/[\\/]+/));
     const sourceHash = `repo:${file.path}`;
     const text = fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, "");
+    const contentHash = crypto.createHash("sha1").update(text).digest("hex");
     const parsed = parseSalesCsv(text, file.name, sourceHash);
     const addedRecords = parsed.records.map(hydrateRecord);
-    const compiledFile = buildCompiledFile(file, addedRecords);
+    const compiledFile = buildCompiledFile(file, addedRecords, contentHash);
     writeFileIfChanged(compiledFile.absolutePath, JSON.stringify(compiledFile.payload));
     compiledPaths.add(compiledFile.absolutePath);
     rowCount += addedRecords.length;
@@ -101,6 +103,7 @@ function main() {
       name: file.name,
       path: file.path,
       version: file.version || "",
+      contentHash,
       source: "Compiled data",
       compiledPath: compiledFile.relativePath,
       rowsRead: parsed.records.length,
@@ -140,7 +143,7 @@ function ensureCompiledDir() {
   }
 }
 
-function buildCompiledFile(file, records) {
+function buildCompiledFile(file, records, contentHash) {
   const dictionary = [];
   const dictionaryIndex = new Map();
   const compactRecords = records.map((record) => compactRecord(record, dictionary, dictionaryIndex));
@@ -153,6 +156,7 @@ function buildCompiledFile(file, records) {
     sourcePath: file.path,
     sourceName: file.name,
     sourceVersion: file.version || "",
+    sourceContentHash: contentHash,
     fields: COMPILED_RECORD_FIELDS,
     numericFields: Array.from(NUMERIC_COMPILED_FIELDS),
     rawFields: Array.from(RAW_COMPILED_FIELDS),
@@ -322,6 +326,7 @@ function normalizeRecord(cells, fieldIndex, fileName, sourceHash, rowNumber) {
   for (const dimension of DIMENSIONS) {
     record[dimension.key] = cleanDimension(cells[fieldIndex[dimension.key]]);
   }
+  repairMisplacedCustomerType(record);
   record.status = normalizeStatus(record.status, record);
   record.region = getRegion(record.shippingProvince);
   record.orderKey = getOrderKey(record);
@@ -335,6 +340,7 @@ function hydrateRecord(record) {
     franchise: cleanDimension(record.franchise),
     status: normalizeStatus(record.status, record)
   };
+  repairMisplacedCustomerType(hydrated);
   hydrated.region = getRegion(hydrated.shippingProvince);
   hydrated.orderKey = getOrderKey(hydrated);
   return hydrated;
@@ -354,8 +360,14 @@ function compactRecord(record, dictionary, dictionaryIndex) {
 }
 
 function getFranchiseValue(cells, fieldIndex) {
-  if (fieldIndex.franchise !== undefined) return cleanDimension(cells[fieldIndex.franchise]);
-  if (fieldIndex.collection !== undefined) return cleanDimension(cells[fieldIndex.collection]);
+  if (fieldIndex.collection !== undefined) {
+    const value = cleanDimension(cells[fieldIndex.collection]);
+    if (!isBlankValue(value) && !isCustomerTypeValue(value)) return value;
+  }
+  if (fieldIndex.franchise !== undefined) {
+    const value = cleanDimension(cells[fieldIndex.franchise]);
+    if (!isBlankValue(value) && !isCustomerTypeValue(value)) return value;
+  }
   return BLANK;
 }
 
@@ -495,6 +507,23 @@ function isBlankValue(value) {
 
 function isUnassignedAttributeValue(value) {
   return UNASSIGNED_ATTRIBUTE_VALUES.has(cleanText(value).toLocaleLowerCase());
+}
+
+function isCustomerTypeValue(value) {
+  return CUSTOMER_TYPE_VALUES.has(cleanText(value).toLocaleLowerCase());
+}
+
+function repairMisplacedCustomerType(record) {
+  const candidateKeys = ["customerType", "collection", "franchise"];
+  const misplacedValue = candidateKeys.map((key) => record[key]).find(isCustomerTypeValue);
+  if (!misplacedValue) return record;
+
+  if (isBlankValue(record.customerType) || !record.customerType || isCustomerTypeValue(record.customerType)) {
+    record.customerType = cleanDimension(misplacedValue);
+  }
+  if (isCustomerTypeValue(record.collection)) record.collection = BLANK;
+  if (isCustomerTypeValue(record.franchise)) record.franchise = BLANK;
+  return record;
 }
 
 function isScientificNotation(value) {
