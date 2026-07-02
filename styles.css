@@ -1376,16 +1376,16 @@ th.numeric {
   display: grid;
   grid-template-columns: repeat(4, minmax(120px, 1fr));
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
 
 .trend-summary div {
   min-width: 0;
   border: 1px solid var(--line);
-  border-left: 3px solid var(--green);
+  border-left: 2px solid var(--green);
   border-radius: 4px;
-  padding: 9px 10px;
-  background: var(--surface-2);
+  padding: 8px 10px;
+  background: #151515;
 }
 
 .trend-summary div:nth-child(3) {
@@ -1400,7 +1400,9 @@ th.numeric {
   display: block;
   color: var(--muted);
   font-size: 10px;
-  font-weight: 820;
+  font-family: var(--font-primary);
+  font-weight: 900;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -1415,10 +1417,40 @@ th.numeric {
   white-space: nowrap;
 }
 
+.trend-chart-shell {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 18px 18px 12px;
+  background: #101010;
+}
+
+.compare-chart-shell {
+  margin: 12px 16px 16px;
+}
+
+.trend-chart-head {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.trend-chart-title {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-primary);
+  font-size: 15px;
+  line-height: 1.2;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .trend-line-svg {
   display: block;
   width: 100%;
-  min-height: 340px;
+  min-height: 326px;
   overflow: visible;
 }
 
@@ -1429,35 +1461,35 @@ th.numeric {
 }
 
 .trend-svg-bg {
-  fill: transparent;
+  fill: #101010;
 }
 
 .trend-range-selection {
-  fill: rgba(255, 221, 0, 0.16);
-  stroke: rgba(255, 221, 0, 0.78);
+  fill: rgba(255, 221, 0, 0.11);
+  stroke: rgba(255, 221, 0, 0.74);
   stroke-width: 1.4;
   pointer-events: none;
 }
 
 .trend-grid-line {
-  stroke: rgba(255, 255, 255, 0.08);
+  stroke: rgba(255, 255, 255, 0.07);
   stroke-width: 1;
 }
 
 .trend-zero-line {
-  stroke: rgba(255, 221, 0, 0.4);
-  stroke-width: 1.4;
+  stroke: rgba(255, 255, 255, 0.13);
+  stroke-width: 1;
 }
 
 .trend-area {
-  fill: rgba(255, 221, 0, 0.12);
+  display: none;
 }
 
 .trend-line {
   fill: none;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 3.2;
+  stroke-width: 2.8;
 }
 
 .sales-line {
@@ -1465,35 +1497,36 @@ th.numeric {
 }
 
 .units-line {
-  stroke: #4fb6ff;
-  stroke-dasharray: 7 5;
-  stroke-width: 3.4;
+  stroke: #5db9ff;
+  stroke-dasharray: none;
+  stroke-width: 2.6;
 }
 
 .compare-period-line {
-  opacity: 0.58;
-  stroke-dasharray: 5 8;
-  stroke-width: 3;
+  opacity: 0.5;
+  stroke-dasharray: 3 7;
+  stroke-width: 2.4;
 }
 
 .compare-period-units-line {
-  stroke-dasharray: 2 8;
-  stroke-width: 2.8;
+  stroke-dasharray: 3 7;
+  stroke-width: 2.3;
 }
 
 .sales-area {
-  fill: rgba(255, 221, 0, 0.13);
+  display: none;
 }
 
 .units-area {
-  fill: rgba(79, 182, 255, 0.11);
+  display: none;
 }
 
 .trend-point-dot {
   fill: var(--green);
   stroke: var(--black);
-  stroke-width: 2;
+  stroke-width: 1.7;
   cursor: pointer;
+  opacity: 0.96;
   transform-box: fill-box;
   transform-origin: center;
   transition: transform 120ms ease, filter 120ms ease, stroke-width 120ms ease;
@@ -1515,12 +1548,12 @@ th.numeric {
 }
 
 .trend-point-units {
-  fill: #4fb6ff;
+  fill: #5db9ff;
 }
 
 .trend-point-dot.compare-period-point {
-  opacity: 0.92;
-  fill: var(--surface);
+  opacity: 0.84;
+  fill: #101010;
 }
 
 .trend-point-sales.compare-period-point {
@@ -1528,25 +1561,26 @@ th.numeric {
 }
 
 .trend-point-units.compare-period-point {
-  stroke: #4fb6ff;
+  stroke: #5db9ff;
 }
 
 .trend-point-group:hover .trend-point-dot,
 .trend-point-group:focus .trend-point-dot,
 .trend-point-group.is-active .trend-point-dot {
-  filter: drop-shadow(0 0 7px rgba(255, 221, 0, 0.36));
-  stroke-width: 2.6;
-  transform: scale(1.28);
+  filter: drop-shadow(0 0 6px rgba(255, 221, 0, 0.42));
+  stroke-width: 2.3;
+  transform: scale(1.24);
 }
 
 .trend-axis-label {
   fill: var(--muted);
   font-size: 11px;
+  font-family: var(--font-secondary);
   font-weight: 760;
 }
 
 .trend-x-label {
-  fill: var(--ink);
+  fill: #b5b5b5;
   font-size: 10px;
   font-weight: 820;
 }
@@ -1557,13 +1591,15 @@ th.numeric {
 
 .trend-legend {
   display: flex;
-  gap: 14px;
+  gap: 16px;
   align-items: center;
   justify-content: flex-end;
-  margin: 0 0 4px;
+  flex-wrap: wrap;
+  margin: 1px 0 0;
   color: var(--muted);
+  font-family: var(--font-secondary);
   font-size: 11px;
-  font-weight: 820;
+  font-weight: 760;
   text-transform: uppercase;
 }
 
@@ -1575,9 +1611,9 @@ th.numeric {
 
 .legend-swatch {
   display: inline-block;
-  width: 24px;
-  height: 3px;
-  border-radius: 999px;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
 }
 
 .legend-swatch.sales {
@@ -1585,12 +1621,13 @@ th.numeric {
 }
 
 .legend-swatch.units {
-  background: repeating-linear-gradient(90deg, #4fb6ff 0 7px, transparent 7px 11px);
+  background: #5db9ff;
 }
 
 .legend-swatch.compare-period {
-  background: repeating-linear-gradient(90deg, var(--green) 0 7px, transparent 7px 12px);
-  box-shadow: 0 0 0 1px rgba(255, 221, 0, 0.24);
+  border: 1px solid rgba(255, 221, 0, 0.8);
+  background: transparent;
+  box-shadow: none;
 }
 
 .trend-tooltip {
@@ -1608,10 +1645,10 @@ th.numeric {
 }
 
 .trend-tooltip-card {
-  fill: rgba(16, 16, 16, 0.98);
-  stroke: rgba(255, 221, 0, 0.78);
+  fill: rgba(20, 20, 20, 0.98);
+  stroke: rgba(255, 255, 255, 0.16);
   stroke-width: 1.2;
-  filter: drop-shadow(0 10px 16px rgba(0, 0, 0, 0.38));
+  filter: drop-shadow(0 12px 18px rgba(0, 0, 0, 0.44));
 }
 
 .compare-period-tooltip .trend-tooltip-card {
@@ -1638,14 +1675,15 @@ th.numeric {
 
 .compare-legend {
   display: flex;
-  gap: 10px;
+  gap: 14px;
   align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
-  margin: 0 0 4px;
+  margin: 1px 0 0;
   color: var(--muted);
+  font-family: var(--font-secondary);
   font-size: 11px;
-  font-weight: 820;
+  font-weight: 760;
   text-transform: uppercase;
 }
 
@@ -1657,20 +1695,21 @@ th.numeric {
 
 .compare-legend i {
   display: inline-block;
-  width: 20px;
-  height: 3px;
-  border-radius: 999px;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
   background: var(--compare-color, var(--green));
 }
 
 .compare-legend i.all-region-swatch {
-  height: 4px;
+  height: 10px;
   box-shadow: 0 0 0 1px rgba(255, 221, 0, 0.28);
 }
 
 .compare-legend i.compare-period-swatch {
-  background: repeating-linear-gradient(90deg, var(--green) 0 7px, transparent 7px 12px);
-  box-shadow: 0 0 0 1px rgba(255, 221, 0, 0.24);
+  border: 1px solid rgba(255, 221, 0, 0.8);
+  background: transparent;
+  box-shadow: none;
 }
 
 .compare-product-line {
@@ -1678,32 +1717,32 @@ th.numeric {
   stroke: var(--compare-color, var(--green));
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 3.5;
+  stroke-width: 2.7;
 }
 
 .compare-region-line {
-  opacity: 0.92;
-  stroke-width: 3;
+  opacity: 0.9;
+  stroke-width: 2.4;
 }
 
 .compare-all-regions-line {
-  stroke-width: 4.3;
+  stroke-width: 3.2;
 }
 
 .compare-units-line {
-  stroke-dasharray: 7 5;
-  stroke-width: 3;
+  stroke-dasharray: none;
+  stroke-width: 2.4;
 }
 
 .compare-period-product-line {
-  opacity: 0.54;
-  stroke-dasharray: 5 8;
-  stroke-width: 2.8;
+  opacity: 0.5;
+  stroke-dasharray: 3 7;
+  stroke-width: 2.3;
 }
 
 .compare-period-product-line.compare-units-line {
-  stroke-dasharray: 2 8;
-  stroke-width: 2.6;
+  stroke-dasharray: 3 7;
+  stroke-width: 2.2;
 }
 
 .compare-point-dot {

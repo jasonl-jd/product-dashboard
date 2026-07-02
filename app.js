@@ -3044,12 +3044,16 @@ function renderTrendLineChart(rows, compareRows = []) {
         <strong class="${latest.salesChange > 0 ? "delta-positive" : latest.salesChange < 0 ? "delta-negative" : ""}">${latestChange}</strong>
       </div>
     </div>
-    <div class="trend-legend" aria-hidden="true">
-      ${showSales ? `<span><i class="legend-swatch sales"></i>Sales $</span>` : ""}
-      ${showUnits ? `<span><i class="legend-swatch units"></i>Units</span>` : ""}
-      ${showCompare ? `<span><i class="legend-swatch compare-period"></i>Compare Period</span>` : ""}
-    </div>
-    <svg class="trend-line-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Trend line" data-trend-selectable="true" data-plot-left="${pad.left}" data-plot-right="${width - pad.right}" data-plot-top="${pad.top}" data-plot-bottom="${height - pad.bottom}" data-trend-point-count="${rows.length}">
+    <div class="trend-chart-shell">
+      <div class="trend-chart-head">
+        <h3 class="trend-chart-title">Net Sales & Units Over Time</h3>
+        <div class="trend-legend" aria-hidden="true">
+          ${showSales ? `<span><i class="legend-swatch sales"></i>Sales $</span>` : ""}
+          ${showUnits ? `<span><i class="legend-swatch units"></i>Units</span>` : ""}
+          ${showCompare ? `<span><i class="legend-swatch compare-period"></i>Compare Period</span>` : ""}
+        </div>
+      </div>
+      <svg class="trend-line-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Trend line" data-trend-selectable="true" data-plot-left="${pad.left}" data-plot-right="${width - pad.right}" data-plot-top="${pad.top}" data-plot-bottom="${height - pad.bottom}" data-trend-point-count="${rows.length}">
       <rect x="0" y="0" width="${width}" height="${height}" class="trend-svg-bg"></rect>
       <rect x="${pad.left}" y="${pad.top}" width="0" height="${plotHeight}" class="trend-range-selection" hidden></rect>
       ${primaryTicks.map((tick) => {
@@ -3093,7 +3097,8 @@ function renderTrendLineChart(rows, compareRows = []) {
         pad,
         trendIndex: index
       })).join("")}
-    </svg>
+      </svg>
+    </div>
   `;
 }
 
@@ -3173,8 +3178,8 @@ function renderTrendPointGroup(row, salesPoint, unitsPoint, options) {
       ${options.showSales ? `<circle cx="${salesPoint.x.toFixed(2)}" cy="${salesPoint.y.toFixed(2)}" r="${pointRadius}" class="trend-point-dot trend-point-sales${pointClass}"></circle>` : ""}
       ${options.showUnits ? `<circle cx="${unitsPoint.x.toFixed(2)}" cy="${unitsPoint.y.toFixed(2)}" r="${pointRadius}" class="trend-point-dot trend-point-units${pointClass}"></circle>` : ""}
       <g class="trend-tooltip${tooltipClass}" transform="translate(${tooltip.x.toFixed(2)} ${tooltip.y.toFixed(2)})">
-        <rect x="0" y="0" width="${tooltip.width}" height="${tooltip.height}" rx="8" class="trend-tooltip-card"></rect>
-        <rect x="0" y="0" width="5" height="${tooltip.height}" rx="2.5" class="trend-tooltip-accent"></rect>
+        <rect x="0" y="0" width="${tooltip.width}" height="${tooltip.height}" rx="4" class="trend-tooltip-card"></rect>
+        <rect x="0" y="0" width="4" height="${tooltip.height}" rx="2" class="trend-tooltip-accent"></rect>
         <text x="14" y="20" class="trend-tooltip-label">${escapeHtml(periodLabel)}</text>
         <text x="14" y="37" class="trend-tooltip-value">${escapeHtml(row.periodLabel)}</text>
         <text x="14" y="57" class="trend-tooltip-label">Sales</text>
@@ -3552,16 +3557,20 @@ function renderProductCompareLineChart(series) {
   const primaryTickFormatter = showSales ? formatCompactCurrency : formatNumber;
 
   return `
-    <div class="compare-legend" aria-hidden="true">
-      ${series.map((item) => `
-        <span class="${item.isAllRegions ? "all-region-legend-item" : ""}" title="${escapeHtml(item.legendTitle || item.optionLabel)}">
-          <i class="${item.isAllRegions ? "all-region-swatch" : ""}" style="--compare-color:${item.color}"></i>
-          ${escapeHtml(item.legendLabel || item.sku)}
-        </span>
-      `).join("")}
-      ${showCompare ? `<span><i class="compare-period-swatch"></i>Compare Period</span>` : ""}
-    </div>
-    <svg class="trend-line-svg compare-line-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Product comparison trend">
+    <div class="trend-chart-shell compare-chart-shell">
+      <div class="trend-chart-head">
+        <h3 class="trend-chart-title">Product Sales Performance Over Time</h3>
+        <div class="compare-legend" aria-hidden="true">
+          ${series.map((item) => `
+            <span class="${item.isAllRegions ? "all-region-legend-item" : ""}" title="${escapeHtml(item.legendTitle || item.optionLabel)}">
+              <i class="${item.isAllRegions ? "all-region-swatch" : ""}" style="--compare-color:${item.color}"></i>
+              ${escapeHtml(item.legendLabel || item.sku)}
+            </span>
+          `).join("")}
+          ${showCompare ? `<span><i class="compare-period-swatch"></i>Compare Period</span>` : ""}
+        </div>
+      </div>
+      <svg class="trend-line-svg compare-line-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Product comparison trend">
       <rect x="0" y="0" width="${width}" height="${height}" class="trend-svg-bg"></rect>
       ${primaryTicks.map((tick) => {
         const y = yForValue(tick, primaryScale);
@@ -3585,7 +3594,8 @@ function renderProductCompareLineChart(series) {
       }).join("")}
       ${showCompare ? series.map((item) => renderProductCompareSeriesPoints(item, { showSales, showUnits, xForIndex, yForValue, salesScale, unitsScale, width, height, pad, rowsKey: "compareRows", isCompare: true })).join("") : ""}
       ${series.map((item) => renderProductCompareSeriesPoints(item, { showSales, showUnits, xForIndex, yForValue, salesScale, unitsScale, width, height, pad })).join("")}
-    </svg>
+      </svg>
+    </div>
   `;
 }
 
@@ -3654,8 +3664,8 @@ function renderProductComparePointGroup(product, row, salesPoint, unitsPoint, op
       ${options.showSales ? `<circle cx="${salesPoint.x.toFixed(2)}" cy="${salesPoint.y.toFixed(2)}" r="${pointRadius}" class="trend-point-dot compare-point-dot${pointClass}" style="--compare-color:${product.color}"></circle>` : ""}
       ${options.showUnits ? `<circle cx="${unitsPoint.x.toFixed(2)}" cy="${unitsPoint.y.toFixed(2)}" r="${pointRadius}" class="trend-point-dot compare-point-dot compare-point-units${pointClass}" style="--compare-color:${product.color}"></circle>` : ""}
       <g class="trend-tooltip compare-tooltip${options.isCompare ? " compare-period-tooltip" : ""}" transform="translate(${tooltip.x.toFixed(2)} ${tooltip.y.toFixed(2)})">
-        <rect x="0" y="0" width="${tooltip.width}" height="${tooltip.height}" rx="8" class="trend-tooltip-card"></rect>
-        <rect x="0" y="0" width="5" height="${tooltip.height}" rx="2.5" class="trend-tooltip-accent" style="--compare-color:${product.color}"></rect>
+        <rect x="0" y="0" width="${tooltip.width}" height="${tooltip.height}" rx="4" class="trend-tooltip-card"></rect>
+        <rect x="0" y="0" width="4" height="${tooltip.height}" rx="2" class="trend-tooltip-accent" style="--compare-color:${product.color}"></rect>
         <text x="14" y="20" class="trend-tooltip-label">Product</text>
         <text x="82" y="20" class="trend-tooltip-value">${escapeHtml(product.sku)}</text>
         <text x="14" y="39" class="trend-tooltip-value">${escapeHtml(productLabel)}</text>
