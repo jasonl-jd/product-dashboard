@@ -10,6 +10,7 @@ const COMPILED_DATA_SCHEMA_VERSION = 1;
 const DATA_CACHE_DB = "product-performance-dashboard";
 const DATA_CACHE_STORE = "parsed-files";
 const DATA_CACHE_VERSION = "parsed-csv-v10";
+const COMPILED_DATA_CACHE_VERSION = "compiled-json-v1";
 const PRODUCT_PANEL_COLLAPSED_STORAGE_KEY = "product-dashboard:product-panel-collapsed";
 const COLUMN_SETTINGS_VERSION = 2;
 const COLUMN_SETTINGS_VERSION_STORAGE_KEY = "product-dashboard:column-settings-version";
@@ -1395,7 +1396,7 @@ async function loadRepositoryData({ forceRefresh = false } = {}) {
     if (compiledFile) {
       try {
         setStatus(`Using compiled data for ${file.name}...`, "busy");
-        const compiledRecords = await loadCompiledDataFile(compiledFile);
+        const compiledRecords = await loadCompiledDataFile(compiledFile, { forceRefresh, cacheKeys });
         addedRecords = compiledRecords.map(hydrateRecord);
         fileMeta = buildRepositoryFileMeta(file, compiledFile, addedRecords, "Compiled data");
       } catch (error) {
@@ -1594,9 +1595,18 @@ async function loadCompiledDataFiles(files) {
   return records;
 }
 
-async function loadCompiledDataFile(file) {
+async function loadCompiledDataFile(file, options = {}) {
   const compiledPath = cleanText(file?.compiledPath);
   if (!compiledPath) return [];
+  const cacheKey = getCompiledFileCacheKey(file);
+  if (cacheKey && Array.isArray(options.cacheKeys)) options.cacheKeys.push(cacheKey);
+
+  const cached = cacheKey && !options.forceRefresh ? await readCachedCompiledFile(cacheKey) : null;
+  if (cached) {
+    setStatus(`Using cached compiled data for ${file.name || file.path || "file"}...`, "busy");
+    await pause();
+    return cached;
+  }
 
   setStatus(`Loading compiled data for ${file.name || file.path || "file"}...`, "busy");
   const response = await fetch(withCacheBust(compiledPath), { cache: "no-store" });
@@ -1609,7 +1619,23 @@ async function loadCompiledDataFile(file) {
   if (!Array.isArray(payload.records)) {
     throw new Error(`Compiled data file ${compiledPath} has no records array.`);
   }
-  return payload.records.map((entry) => expandCompiledRecord(entry, fields, payload));
+  const records = payload.records.map((entry) => expandCompiledRecord(entry, fields, payload));
+  if (cacheKey) await writeCachedCompiledFile(cacheKey, records);
+  return records;
+}
+
+function getCompiledFileCacheKey(file) {
+  const compiledPath = cleanText(file?.compiledPath);
+  if (!compiledPath) return "";
+  const signature = cleanText(file?.contentHash || file?.sourceContentHash || file?.version || [
+    file?.rowsAdded ?? "",
+    file?.minDate ?? "",
+    file?.maxDate ?? "",
+    file?.netSales ?? "",
+    file?.netUnits ?? ""
+  ].join("|"));
+  if (!signature) return "";
+  return [COMPILED_DATA_CACHE_VERSION, compiledPath, signature].join("||");
 }
 
 async function loadCompiledDataChunks(chunks) {
@@ -1770,6 +1796,38 @@ async function writeCachedParsedFile(key, parsed) {
     });
   } catch (error) {
     console.warn("Could not write parsed data cache.", error);
+  }
+}
+
+async function readCachedCompiledFile(key) {
+  try {
+    const db = await getParsedCacheDb();
+    if (!db) return null;
+    const entry = await idbRequest(db.transaction(DATA_CACHE_STORE, "readonly").objectStore(DATA_CACHE_STORE).get(key));
+    return Array.isArray(entry?.records) ? entry.records : null;
+  } catch (error) {
+    console.warn("Could not read compiled data cache.", error);
+    return null;
+  }
+}
+
+async function writeCachedCompiledFile(key, records) {
+  try {
+    const db = await getParsedCacheDb();
+    if (!db) return;
+    const transaction = db.transaction(DATA_CACHE_STORE, "readwrite");
+    transaction.objectStore(DATA_CACHE_STORE).put({
+      key,
+      records,
+      savedAt: new Date().toISOString()
+    });
+    await new Promise((resolve, reject) => {
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  } catch (error) {
+    console.warn("Could not write compiled data cache.", error);
   }
 }
 
@@ -2914,33 +2972,41 @@ function renderTrendLineChart(rows, compareRows = []) {
   const pad = { top: 30, right: showBoth ? 92 : 46, bottom: 86, left: 88 };
   const plotWidth = width - pad.left - pad.right;
   const plotHeight = height - pad.top - pad.bottom;
-  const compareRowsForAxis = showCompare ? compareRows.slice(0, rows.length) : [];
+  const compareRowsForAxis = showCompare ? compareRows : [];
+  const axisRows = compareRowsForAxis.length > rows.length ? compareRowsForAxis : rows;
+  const axisLength = Math.max(axisRows.length, 1);
   const salesScale = getTrendScale(rows.map((row) => row.netSales).concat(compareRowsForAxis.map((row) => row.netSales)));
   const unitsScale = getTrendScale(rows.map((row) => row.netUnits).concat(compareRowsForAxis.map((row) => row.netUnits)));
   const primaryScale = showSales ? salesScale : unitsScale;
-  const xForIndex = (index) => {
-    if (rows.length === 1) return pad.left + plotWidth / 2;
-    return pad.left + (index / (rows.length - 1)) * plotWidth;
+  const xForAxisIndex = (index) => {
+    if (axisLength <= 1) return pad.left + plotWidth / 2;
+    return pad.left + (index / (axisLength - 1)) * plotWidth;
+  };
+  const xForSeriesIndex = (index, seriesLength) => {
+    if (seriesLength <= 1) {
+      return axisLength > 1 ? pad.left + plotWidth : pad.left + plotWidth / 2;
+    }
+    return pad.left + (index / (seriesLength - 1)) * plotWidth;
   };
   const yForValue = (value, scale) => pad.top + (1 - (value - scale.min) / (scale.max - scale.min)) * plotHeight;
   const salesPoints = rows.map((row, index) => ({
     ...row,
-    x: xForIndex(index),
+    x: xForSeriesIndex(index, rows.length),
     y: yForValue(row.netSales, salesScale)
   }));
   const unitsPoints = rows.map((row, index) => ({
     ...row,
-    x: xForIndex(index),
+    x: xForSeriesIndex(index, rows.length),
     y: yForValue(row.netUnits, unitsScale)
   }));
   const compareSalesPoints = compareRowsForAxis.map((row, index) => ({
     ...row,
-    x: xForIndex(index),
+    x: xForSeriesIndex(index, compareRowsForAxis.length),
     y: yForValue(row.netSales, salesScale)
   }));
   const compareUnitsPoints = compareRowsForAxis.map((row, index) => ({
     ...row,
-    x: xForIndex(index),
+    x: xForSeriesIndex(index, compareRowsForAxis.length),
     y: yForValue(row.netUnits, unitsScale)
   }));
   const primaryTicks = buildTrendYAxisTicks(primaryScale.min, primaryScale.max, 4);
@@ -2957,7 +3023,7 @@ function renderTrendLineChart(rows, compareRows = []) {
   const latest = rows[rows.length - 1];
   const latestChange = latest.salesChange === null ? "" : `${latest.salesChange >= 0 ? "+" : ""}${formatCurrency(latest.salesChange)}`;
   const primaryTickFormatter = showSales ? formatCompactCurrency : formatNumber;
-  const xLabelIndexes = getTrendXLabelIndexes(rows, state.trendGrain, plotWidth);
+  const xLabelIndexes = getTrendXLabelIndexes(axisRows, state.trendGrain, plotWidth);
 
   return `
     <div class="trend-summary">
@@ -3005,10 +3071,10 @@ function renderTrendLineChart(rows, compareRows = []) {
       ${showSales ? `<path d="${salesLinePath}" class="trend-line sales-line"></path>` : ""}
       ${showUnits ? `<path d="${unitsLinePath}" class="trend-line units-line"></path>` : ""}
       ${xLabelIndexes.map((index) => {
-        const row = rows[index];
-        const point = showSales ? salesPoints[index] : unitsPoints[index];
+        const row = axisRows[index];
+        const x = xForAxisIndex(index);
         const y = height - 32;
-        return `<text x="${point.x.toFixed(2)}" y="${y}" class="trend-axis-label trend-x-label" text-anchor="end" transform="rotate(-35 ${point.x.toFixed(2)} ${y})">${escapeHtml(row.axisLabel || row.periodLabel)}</text>`;
+        return `<text x="${x.toFixed(2)}" y="${y}" class="trend-axis-label trend-x-label" text-anchor="end" transform="rotate(-35 ${x.toFixed(2)} ${y})">${escapeHtml(row.axisLabel || row.periodLabel)}</text>`;
       }).join("")}
       ${showCompare ? compareRowsForAxis.map((row, index) => renderTrendPointGroup(row, compareSalesPoints[index], compareUnitsPoints[index], {
         showSales,
@@ -3451,23 +3517,32 @@ function renderProductCompareLineChart(series) {
   const showSales = metricMode !== "units";
   const showUnits = metricMode !== "sales";
   const showBoth = showSales && showUnits;
-  const periods = series.find((item) => item.rows.length)?.rows || [];
   const showCompare = shouldShowProductCompareLine() && series.some((item) => item.compareRows?.length);
+  const currentPeriods = series.find((item) => item.rows.length)?.rows || [];
+  const comparePeriods = showCompare ? (series.find((item) => item.compareRows?.length)?.compareRows || []) : [];
+  const periods = comparePeriods.length > currentPeriods.length ? comparePeriods : currentPeriods;
+  const axisLength = Math.max(periods.length, 1);
   const width = 930;
   const height = 420;
   const pad = { top: 34, right: showBoth ? 100 : 48, bottom: 92, left: 92 };
   const plotWidth = width - pad.left - pad.right;
   const plotHeight = height - pad.top - pad.bottom;
   const salesValues = series.flatMap((item) => item.rows.map((row) => row.netSales)
-    .concat(showCompare ? (item.compareRows || []).slice(0, periods.length).map((row) => row.netSales) : []));
+    .concat(showCompare ? (item.compareRows || []).map((row) => row.netSales) : []));
   const unitsValues = series.flatMap((item) => item.rows.map((row) => row.netUnits)
-    .concat(showCompare ? (item.compareRows || []).slice(0, periods.length).map((row) => row.netUnits) : []));
+    .concat(showCompare ? (item.compareRows || []).map((row) => row.netUnits) : []));
   const salesScale = getTrendScale(salesValues);
   const unitsScale = getTrendScale(unitsValues);
   const primaryScale = showSales ? salesScale : unitsScale;
-  const xForIndex = (index) => {
-    if (periods.length <= 1) return pad.left + plotWidth / 2;
-    return pad.left + (index / (periods.length - 1)) * plotWidth;
+  const xForAxisIndex = (index) => {
+    if (axisLength <= 1) return pad.left + plotWidth / 2;
+    return pad.left + (index / (axisLength - 1)) * plotWidth;
+  };
+  const xForIndex = (index, seriesLength = axisLength) => {
+    if (seriesLength <= 1) {
+      return axisLength > 1 ? pad.left + plotWidth : pad.left + plotWidth / 2;
+    }
+    return pad.left + (index / (seriesLength - 1)) * plotWidth;
   };
   const yForValue = (value, scale) => pad.top + (1 - (value - scale.min) / (scale.max - scale.min)) * plotHeight;
   const primaryTicks = buildTrendYAxisTicks(primaryScale.min, primaryScale.max, 4);
@@ -3500,15 +3575,15 @@ function renderProductCompareLineChart(series) {
         return `<text x="${width - pad.right + 14}" y="${(y + 4).toFixed(2)}" class="trend-axis-label units-axis" text-anchor="start">${escapeHtml(formatNumber(tick))}</text>`;
       }).join("")}
       <line x1="${pad.left}" y1="${baselineY.toFixed(2)}" x2="${width - pad.right}" y2="${baselineY.toFixed(2)}" class="trend-zero-line"></line>
-      ${showCompare ? series.map((item) => renderProductCompareSeriesLines(item, { showSales, showUnits, xForIndex, yForValue, salesScale, unitsScale, rowsKey: "compareRows", isCompare: true, maxPoints: periods.length })).join("") : ""}
+      ${showCompare ? series.map((item) => renderProductCompareSeriesLines(item, { showSales, showUnits, xForIndex, yForValue, salesScale, unitsScale, rowsKey: "compareRows", isCompare: true })).join("") : ""}
       ${series.map((item) => renderProductCompareSeriesLines(item, { showSales, showUnits, xForIndex, yForValue, salesScale, unitsScale })).join("")}
       ${xLabelIndexes.map((index) => {
         const period = periods[index];
-        const x = xForIndex(index);
+        const x = xForAxisIndex(index);
         const y = height - 34;
         return `<text x="${x.toFixed(2)}" y="${y}" class="trend-axis-label trend-x-label" text-anchor="end" transform="rotate(-35 ${x.toFixed(2)} ${y})">${escapeHtml(period.axisLabel || period.periodLabel)}</text>`;
       }).join("")}
-      ${showCompare ? series.map((item) => renderProductCompareSeriesPoints(item, { showSales, showUnits, xForIndex, yForValue, salesScale, unitsScale, width, height, pad, rowsKey: "compareRows", isCompare: true, maxPoints: periods.length })).join("") : ""}
+      ${showCompare ? series.map((item) => renderProductCompareSeriesPoints(item, { showSales, showUnits, xForIndex, yForValue, salesScale, unitsScale, width, height, pad, rowsKey: "compareRows", isCompare: true })).join("") : ""}
       ${series.map((item) => renderProductCompareSeriesPoints(item, { showSales, showUnits, xForIndex, yForValue, salesScale, unitsScale, width, height, pad })).join("")}
     </svg>
   `;
@@ -3521,11 +3596,11 @@ function renderProductCompareSeriesLines(item, options) {
   const compareClass = options.isCompare ? " compare-period-product-line" : "";
   const regionClass = item.isAllRegions ? " compare-all-regions-line" : item.regionLabel ? " compare-region-line" : "";
   const salesPoints = rows.map((row, index) => ({
-    x: options.xForIndex(index),
+    x: options.xForIndex(index, rows.length),
     y: options.yForValue(row.netSales, options.salesScale)
   }));
   const unitsPoints = rows.map((row, index) => ({
-    x: options.xForIndex(index),
+    x: options.xForIndex(index, rows.length),
     y: options.yForValue(row.netUnits, options.unitsScale)
   }));
 
@@ -3539,11 +3614,11 @@ function renderProductCompareSeriesPoints(item, options) {
   const rows = getProductCompareChartRows(item, options);
   return rows.map((row, index) => {
     const salesPoint = {
-      x: options.xForIndex(index),
+      x: options.xForIndex(index, rows.length),
       y: options.yForValue(row.netSales, options.salesScale)
     };
     const unitsPoint = {
-      x: options.xForIndex(index),
+      x: options.xForIndex(index, rows.length),
       y: options.yForValue(row.netUnits, options.unitsScale)
     };
     return renderProductComparePointGroup(item, row, salesPoint, unitsPoint, options);
@@ -3551,9 +3626,7 @@ function renderProductCompareSeriesPoints(item, options) {
 }
 
 function getProductCompareChartRows(item, options) {
-  const rows = item[options.rowsKey || "rows"] || [];
-  if (!options.maxPoints) return rows;
-  return rows.slice(0, options.maxPoints);
+  return item[options.rowsKey || "rows"] || [];
 }
 
 function renderProductComparePointGroup(product, row, salesPoint, unitsPoint, options) {
