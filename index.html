@@ -44,6 +44,16 @@
               <span>Compare End</span>
               <input id="compare-end" type="date">
             </label>
+            <label>
+              <span>Compare As</span>
+              <select id="compare-basis">
+                <option value="auto" selected>Auto</option>
+                <option value="total">Total</option>
+                <option value="average-week">Average Week</option>
+                <option value="average-period">Average Matching Period</option>
+                <option value="rolling-4-week">Rolling 4-Week Avg</option>
+              </select>
+            </label>
           </div>
           <div class="inline-actions">
             <button id="apply-periods" class="button compact" type="button" disabled>Apply Periods</button>

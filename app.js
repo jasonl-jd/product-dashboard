@@ -36,6 +36,15 @@ const PRICE_STATUS_LABELS = ["Full Price", "Markdown"];
 const STATUS_DISPLAY_ORDER = ["Full Price", "Markdown", "Return"];
 const EXCLUDED_ANALYSIS_PRODUCT_TITLES = new Set(["[refund adjustment]", "refund adjustment"]);
 const UNASSIGNED_ATTRIBUTE_VALUES = new Set(["false"]);
+const CUSTOMER_TYPE_VALUES = new Set(["first time customer", "returning customer"]);
+const COMPARE_BASIS_DEFAULT = "auto";
+const COMPARE_BASIS_LABELS = {
+  auto: "Auto",
+  total: "Total",
+  "average-week": "Average Week",
+  "average-period": "Average Matching Period",
+  "rolling-4-week": "Rolling 4-Week Avg"
+};
 const ARRAY_APPEND_CHUNK_SIZE = 5000;
 
 const DIMENSIONS = [
@@ -244,7 +253,8 @@ const state = {
     currentStart: "",
     currentEnd: "",
     compareStart: "",
-    compareEnd: ""
+    compareEnd: "",
+    compareBasis: COMPARE_BASIS_DEFAULT
   },
   periodsDirty: false,
   columnOrders: {
@@ -297,6 +307,7 @@ function collectDom() {
     currentEnd: document.querySelector("#current-end"),
     compareStart: document.querySelector("#compare-start"),
     compareEnd: document.querySelector("#compare-end"),
+    compareBasis: document.querySelector("#compare-basis"),
     applyPeriods: document.querySelector("#apply-periods"),
     swapPeriods: document.querySelector("#swap-periods"),
     allDates: document.querySelector("#all-dates"),
@@ -440,6 +451,7 @@ function bindEvents() {
     input.addEventListener("change", handlePeriodInputChange);
     input.addEventListener("blur", restoreUncommittedPeriodDateSeed);
   });
+  dom.compareBasis?.addEventListener("change", handlePeriodInputChange);
 
   dom.filters.addEventListener("input", handleFilterInput);
   dom.filters.addEventListener("change", handleFilterChange);
@@ -670,6 +682,7 @@ function resetTrendSelection() {
   dom.currentEnd.value = previous.currentEnd;
   dom.compareStart.value = previous.compareStart;
   dom.compareEnd.value = previous.compareEnd;
+  if (dom.compareBasis) dom.compareBasis.value = previous.compareBasis || COMPARE_BASIS_DEFAULT;
   clearTrendSelectionState();
   syncAppliedPeriodsFromInputs();
   renderAll();
@@ -2153,6 +2166,7 @@ function normalizeRecord(cells, fieldIndex, fileName, sourceHash, rowNumber) {
   for (const dimension of DIMENSIONS) {
     record[dimension.key] = cleanDimension(cells[fieldIndex[dimension.key]]);
   }
+  repairMisplacedCustomerType(record);
   record.status = normalizeStatus(record.status, record);
   record.region = getRegion(record.shippingProvince);
 
@@ -2162,11 +2176,13 @@ function normalizeRecord(cells, fieldIndex, fileName, sourceHash, rowNumber) {
 }
 
 function getFranchiseValue(cells, fieldIndex) {
-  if (fieldIndex.franchise !== undefined) {
-    return cleanDimension(cells[fieldIndex.franchise]);
-  }
   if (fieldIndex.collection !== undefined) {
-    return cleanDimension(cells[fieldIndex.collection]);
+    const value = cleanDimension(cells[fieldIndex.collection]);
+    if (!isBlankValue(value) && !isCustomerTypeValue(value)) return value;
+  }
+  if (fieldIndex.franchise !== undefined) {
+    const value = cleanDimension(cells[fieldIndex.franchise]);
+    if (!isBlankValue(value) && !isCustomerTypeValue(value)) return value;
   }
   return BLANK;
 }
@@ -2193,16 +2209,22 @@ function buildRenderContext() {
   const periods = getAppliedPeriods();
   const filtered = applyDimensionFilters(analysisRecords);
   const current = filtered.filter((record) => inDateRange(record, periods.currentStart, periods.currentEnd));
-  const hasComparison = hasComparisonPeriod(periods);
-  const comparison = hasComparison ? filtered.filter((record) => inDateRange(record, periods.compareStart, periods.compareEnd)) : [];
+  const comparisonBasis = getComparisonBasis(periods);
+  const hasComparison = comparisonBasis.hasComparison;
+  const comparisonSource = hasComparison
+    ? filtered.filter((record) => inDateRange(record, comparisonBasis.sourceStart, comparisonBasis.sourceEnd))
+    : [];
+  const comparison = applyComparisonBasis(comparisonSource, comparisonBasis);
   const currentSummary = summarize(current);
   const compareSummary = summarize(comparison);
 
   return {
     analysisRecords,
     periods,
+    comparisonBasis,
     filtered,
     current,
+    comparisonSource,
     comparison,
     hasComparison,
     currentSummary,
@@ -2644,7 +2666,9 @@ function applyPeriodInputs() {
 
   syncAppliedPeriodsFromInputs();
   renderAll();
-  setStatus(`Periods applied: ${state.periods.currentStart || "all"} to ${state.periods.currentEnd || "latest"}.`);
+  const basis = getComparisonBasis(getAppliedPeriods());
+  const basisText = basis.hasComparison ? ` Compare as ${basis.label}.` : "";
+  setStatus(`Periods applied: ${state.periods.currentStart || "all"} to ${state.periods.currentEnd || "latest"}.${basisText}`);
   return true;
 }
 
@@ -2669,8 +2693,14 @@ function readPeriodInputs() {
     currentStart: dom.currentStart.value,
     currentEnd: dom.currentEnd.value,
     compareStart: dom.compareStart.value,
-    compareEnd: dom.compareEnd.value
+    compareEnd: dom.compareEnd.value,
+    compareBasis: getCompareBasisInputValue()
   };
+}
+
+function getCompareBasisInputValue() {
+  const value = dom.compareBasis?.value || COMPARE_BASIS_DEFAULT;
+  return Object.prototype.hasOwnProperty.call(COMPARE_BASIS_LABELS, value) ? value : COMPARE_BASIS_DEFAULT;
 }
 
 function getAppliedPeriods() {
@@ -2691,7 +2721,8 @@ function periodInputsMatchApplied() {
   return inputs.currentStart === applied.currentStart
     && inputs.currentEnd === applied.currentEnd
     && inputs.compareStart === applied.compareStart
-    && inputs.compareEnd === applied.compareEnd;
+    && inputs.compareEnd === applied.compareEnd
+    && inputs.compareBasis === (applied.compareBasis || COMPARE_BASIS_DEFAULT);
 }
 
 function updateApplyPeriodsButton() {
@@ -2711,6 +2742,9 @@ function validatePeriodInputs() {
 
   const hasCompareStart = Boolean(periods.compareStart);
   const hasCompareEnd = Boolean(periods.compareEnd);
+  if (periods.compareBasis === "rolling-4-week") {
+    return "";
+  }
   if (hasCompareStart !== hasCompareEnd) {
     return "Choose both Compare Start and Compare End, or leave both compare fields blank.";
   }
@@ -2831,9 +2865,10 @@ function getCurrentTrendRecords() {
 
 function getCompareTrendRecords() {
   const periods = getAppliedPeriods();
-  if (!hasComparisonPeriod(periods)) return [];
+  const basis = getComparisonBasis(periods);
+  if (!basis.hasComparison) return [];
   return getFilteredTrendRecords()
-    .filter((record) => inDateRange(record, periods.compareStart, periods.compareEnd));
+    .filter((record) => inDateRange(record, basis.sourceStart, basis.sourceEnd));
 }
 
 function getFilteredTrendRecords() {
@@ -2852,9 +2887,10 @@ function renderTrendTable(filteredRecords) {
     ? filterTrendProductRecords(getCompareTrendRecords())
     : [];
   const periods = getAppliedPeriods();
+  const comparisonBasis = getComparisonBasis(periods);
   const rows = buildTrendRows(trendRecords, state.trendGrain, periods.currentStart, periods.currentEnd);
   const compareRows = compareTrendRecords.length
-    ? buildTrendRows(compareTrendRecords, state.trendGrain, periods.compareStart, periods.compareEnd)
+    ? buildTrendRows(compareTrendRecords, state.trendGrain, comparisonBasis.sourceStart, comparisonBasis.sourceEnd)
     : [];
   const grainLabel = getTrendGrainLabel(state.trendGrain);
   dom.trendHeading.textContent = state.trendProductQuery ? `${grainLabel} Trend by Product` : `${grainLabel} Trend`;
@@ -3216,12 +3252,13 @@ function buildProductCompareSeries(records, products, comparisonRecords = []) {
 
   const grain = state.compareGrain || "week";
   const periods = getAppliedPeriods();
+  const comparisonBasis = getComparisonBasis(periods);
   const series = products.map((product, index) => {
     const currentProductRecords = productRecords.get(product.productKey) || [];
     const compareRecords = compareProductRecords.get(product.productKey) || [];
     const rows = buildTrendRows(currentProductRecords, grain, periods.currentStart, periods.currentEnd);
     const compareRows = comparisonRecords.length
-      ? buildTrendRows(compareRecords, grain, periods.compareStart, periods.compareEnd)
+      ? buildTrendRows(compareRecords, grain, comparisonBasis.sourceStart, comparisonBasis.sourceEnd)
       : [];
     const totalSales = sum(currentProductRecords, "netSales");
     const totalUnits = sum(currentProductRecords, "netUnits");
@@ -3257,6 +3294,7 @@ function buildProductCompareChartSeries(records, products, comparisonRecords, ag
 
   const grain = state.compareGrain || "week";
   const periods = getAppliedPeriods();
+  const comparisonBasis = getComparisonBasis(periods);
   const aggregateByProduct = new Map(aggregateSeries.map((item) => [item.productKey, item]));
   const series = [];
   let lineIndex = 0;
@@ -3284,7 +3322,7 @@ function buildProductCompareChartSeries(records, products, comparisonRecords, ag
       const compareRegionRecords = allCompareRecords.filter((record) => record.region === region);
       const rows = buildTrendRows(currentRegionRecords, grain, periods.currentStart, periods.currentEnd);
       const compareRows = comparisonRecords.length
-        ? buildTrendRows(compareRegionRecords, grain, periods.compareStart, periods.compareEnd)
+        ? buildTrendRows(compareRegionRecords, grain, comparisonBasis.sourceStart, comparisonBasis.sourceEnd)
         : [];
       if (!rows.length && !compareRows.length) return;
 
@@ -3821,7 +3859,7 @@ function buildPivot(currentRecords, comparisonRecords, hasComparison) {
       status: current.status || comparison.status || "",
       netSales: current.netSales,
       netUnits: current.netUnits,
-      orders: current.orders.size,
+      orders: getAggregateOrderCount(current),
       salesShare: totalSales ? current.netSales / totalSales : 0,
       unitsShare: totalUnits ? current.netUnits / totalUnits : 0,
       hasComparison,
@@ -3859,7 +3897,7 @@ function buildStatusSplit(currentRecords, comparisonRecords, hasComparison) {
       value,
       netSales: current.netSales,
       netUnits: current.netUnits,
-      orders: current.orders.size,
+      orders: getAggregateOrderCount(current),
       salesShare: totalSales ? current.netSales / totalSales : 0,
       unitsShare: totalUnits ? current.netUnits / totalUnits : 0,
       hasComparison,
@@ -3914,7 +3952,7 @@ function buildMetricBreakdown(currentRecords, comparisonRecords, hasComparison, 
         value,
         netSales: current.netSales,
         netUnits: current.netUnits,
-        orders: current.orders.size,
+      orders: getAggregateOrderCount(current),
         salesShare: totalSales ? current.netSales / totalSales : 0,
         unitsShare: totalUnits ? current.netUnits / totalUnits : 0,
         hasComparison,
@@ -3956,7 +3994,7 @@ function getOrderedStatusValues(currentMap, compareMap) {
       if (STATUS_DISPLAY_ORDER.includes(value)) return true;
       const current = currentMap.get(value);
       const comparison = compareMap.get(value);
-      return Boolean((current && (current.netSales !== 0 || current.netUnits !== 0 || current.orders.size)) || (comparison && (comparison.netSales !== 0 || comparison.netUnits !== 0 || comparison.orders.size)));
+      return Boolean((current && (current.netSales !== 0 || current.netUnits !== 0 || getAggregateOrderCount(current))) || (comparison && (comparison.netSales !== 0 || comparison.netUnits !== 0 || getAggregateOrderCount(comparison))));
     });
 }
 
@@ -3967,8 +4005,9 @@ function aggregateByDimension(records, key) {
     if (isHiddenResultValue(value)) continue;
     if (!map.has(value)) map.set(value, emptyAggregate());
     const aggregate = map.get(value);
-    aggregate.netSales += record.netSales;
-    aggregate.netUnits += record.netUnits;
+    aggregate.netSales += metricValue(record, "netSales");
+    aggregate.netUnits += metricValue(record, "netUnits");
+    addWeightedOrder(aggregate.orderWeights, record);
     if (record.orderKey) aggregate.orders.add(record.orderKey);
     addStatusBreakdown(aggregate.statusBreakdown, record);
   }
@@ -3984,6 +4023,7 @@ function emptyAggregate() {
     netSales: 0,
     netUnits: 0,
     orders: new Set(),
+    orderWeights: new Map(),
     statusBreakdown: new Map()
   };
 }
@@ -4392,8 +4432,8 @@ function aggregateProducts(records) {
     }
 
     const product = map.get(key);
-    product.netSales += record.netSales;
-    product.netUnits += record.netUnits;
+    product.netSales += metricValue(record, "netSales");
+    product.netUnits += metricValue(record, "netUnits");
     addStatusBreakdown(product.statusBreakdown, record);
   }
 
@@ -4408,8 +4448,8 @@ function addStatusBreakdown(statusBreakdown, record) {
   const status = normalizeStatus(record.status);
   if (isBlankValue(status) || isReferenceErrorValue(status)) return;
   const metrics = statusBreakdown.get(status) || { netSales: 0, netUnits: 0 };
-  metrics.netSales += record.netSales;
-  metrics.netUnits += record.netUnits;
+  metrics.netSales += metricValue(record, "netSales");
+  metrics.netUnits += metricValue(record, "netUnits");
   statusBreakdown.set(status, metrics);
 }
 
@@ -4731,9 +4771,10 @@ function renderTradeMeeting(filteredRecords) {
 
   const periods = getTradePeriods();
   const current = filteredRecords.filter((record) => inDateRange(record, periods.current.start, periods.current.end));
-  const comparison = periods.comparison
+  const comparisonSource = periods.comparison
     ? filteredRecords.filter((record) => inDateRange(record, periods.comparison.start, periods.comparison.end))
     : [];
+  const comparison = applyComparisonBasis(comparisonSource, periods.comparisonBasis);
   const hasComparison = Boolean(periods.comparison);
 
   const currentSummary = summarize(current);
@@ -4747,7 +4788,7 @@ function renderTradeMeeting(filteredRecords) {
   state.tradeBrandRows = brandRows;
   state.tradeRegionalRows = regionalRows;
 
-  dom.tradeWeekLabel.textContent = `${formatTradeDateRange(periods.current)} | Compare ${formatTradeDateRange(periods.comparison)}`;
+  dom.tradeWeekLabel.textContent = `${formatTradeDateRange(periods.current)} | Compare ${formatTradeDateRange(periods.comparison)} (${periods.comparisonBasis.label})`;
   renderTradeAnalysis(buildTradeAnalysisBullets({
     currentSummary,
     comparisonSummary,
@@ -4767,14 +4808,27 @@ function getTradePeriods() {
   const periods = getAppliedPeriods();
   const current = getFiscalWeekRangeForSelection(periods.currentStart, periods.currentEnd);
   let comparison = null;
+  let comparisonBasis = getComparisonBasis(periods);
 
-  if (periods.compareStart || periods.compareEnd) {
-    comparison = getFiscalWeekRangeForSelection(periods.compareStart, periods.compareEnd);
+  if (comparisonBasis.hasComparison) {
+    comparison = {
+      start: comparisonBasis.sourceStart,
+      end: comparisonBasis.sourceEnd
+    };
   } else if (current) {
     comparison = getPreviousFiscalWeekRange(current);
+    comparisonBasis = {
+      requestedMode: "total",
+      mode: "total",
+      label: "Previous Week",
+      sourceStart: comparison.start,
+      sourceEnd: comparison.end,
+      scale: 1,
+      hasComparison: true
+    };
   }
 
-  return { current, comparison };
+  return { current, comparison, comparisonBasis };
 }
 
 function getFiscalWeekRangeForSelection(startKey, endKey) {
@@ -4840,8 +4894,8 @@ function aggregateTradeBreakdown(records, getter) {
     if (!label || label === BLANK) continue;
     if (!map.has(label)) map.set(label, emptyMetricAggregate());
     const aggregate = map.get(label);
-    aggregate.netSales += record.netSales;
-    aggregate.netUnits += record.netUnits;
+    aggregate.netSales += metricValue(record, "netSales");
+    aggregate.netUnits += metricValue(record, "netUnits");
   }
   return map;
 }
@@ -4903,8 +4957,8 @@ function aggregateTradeBrands(records) {
     if (isHiddenResultValue(brand)) continue;
     if (!map.has(brand)) map.set(brand, emptyTradeBrandAggregate(brand));
     const aggregate = map.get(brand);
-    aggregate.netSales += record.netSales;
-    aggregate.netUnits += record.netUnits;
+    aggregate.netSales += metricValue(record, "netSales");
+    aggregate.netUnits += metricValue(record, "netUnits");
 
     const productKey = getProductKey(record);
     if (!aggregate.products.has(productKey)) {
@@ -4918,8 +4972,8 @@ function aggregateTradeBrands(records) {
       });
     }
     const product = aggregate.products.get(productKey);
-    product.netSales += record.netSales;
-    product.netUnits += record.netUnits;
+    product.netSales += metricValue(record, "netSales");
+    product.netUnits += metricValue(record, "netUnits");
     addStatusBreakdown(product.statusBreakdown, record);
   }
 
@@ -5221,20 +5275,20 @@ function getTradeRegionalSalesFaller(rows) {
 }
 
 function summarize(records) {
-  const orders = new Set();
+  const orders = new Map();
   let netSales = 0;
   let netUnits = 0;
 
   for (const record of records) {
-    netSales += record.netSales;
-    netUnits += record.netUnits;
-    if (record.orderKey) orders.add(record.orderKey);
+    netSales += metricValue(record, "netSales");
+    netUnits += metricValue(record, "netUnits");
+    if (record.orderKey && !orders.has(record.orderKey)) orders.set(record.orderKey, metricWeight(record));
   }
 
   return {
     netSales,
     netUnits,
-    orders: orders.size
+    orders: sumMapValues(orders)
   };
 }
 
@@ -5278,7 +5332,102 @@ function inDateRange(record, start, end) {
 }
 
 function hasComparisonPeriod(periods = getAppliedPeriods()) {
-  return Boolean(periods.compareStart && periods.compareEnd);
+  return getComparisonBasis(periods).hasComparison;
+}
+
+function getComparisonBasis(periods = getAppliedPeriods()) {
+  const requestedMode = periods.compareBasis || COMPARE_BASIS_DEFAULT;
+  const currentDays = getInclusiveDateSpanDays(periods.currentStart, periods.currentEnd);
+
+  if (requestedMode === "rolling-4-week") {
+    if (!periods.currentStart || !periods.currentEnd) return noComparisonBasis(requestedMode);
+    const sourceEndDate = addDays(dateFromKey(periods.currentStart), -1);
+    const sourceStartDate = addDays(sourceEndDate, -27);
+    return {
+      requestedMode,
+      mode: "rolling-4-week",
+      label: COMPARE_BASIS_LABELS["rolling-4-week"],
+      sourceStart: dateKey(sourceStartDate),
+      sourceEnd: dateKey(sourceEndDate),
+      scale: 1 / 4,
+      hasComparison: true
+    };
+  }
+
+  if (!periods.compareStart || !periods.compareEnd) return noComparisonBasis(requestedMode);
+
+  const compareDays = getInclusiveDateSpanDays(periods.compareStart, periods.compareEnd);
+  let mode = requestedMode;
+  if (mode === "auto") {
+    mode = isExactFiscalWeek(periods.currentStart, periods.currentEnd) && compareDays > currentDays
+      ? "average-week"
+      : "total";
+  }
+
+  let scale = 1;
+  if (mode === "average-week") {
+    scale = 1 / Math.max(1, countFiscalWeeksInRange(periods.compareStart, periods.compareEnd));
+  } else if (mode === "average-period") {
+    scale = compareDays ? currentDays / compareDays : 1;
+  }
+
+  return {
+    requestedMode,
+    mode,
+    label: mode === "total" && requestedMode === "auto" ? "Auto Total" : COMPARE_BASIS_LABELS[mode] || COMPARE_BASIS_LABELS.total,
+    sourceStart: periods.compareStart,
+    sourceEnd: periods.compareEnd,
+    scale,
+    hasComparison: true
+  };
+}
+
+function noComparisonBasis(requestedMode = COMPARE_BASIS_DEFAULT) {
+  return {
+    requestedMode,
+    mode: requestedMode === "auto" ? "total" : requestedMode,
+    label: COMPARE_BASIS_LABELS[requestedMode] || COMPARE_BASIS_LABELS.auto,
+    sourceStart: "",
+    sourceEnd: "",
+    scale: 1,
+    hasComparison: false
+  };
+}
+
+function getInclusiveDateSpanDays(startKey, endKey) {
+  if (!startKey || !endKey) return 0;
+  const start = dateFromKey(startKey);
+  const end = dateFromKey(endKey);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return 0;
+  return Math.round((end - start) / 86400000) + 1;
+}
+
+function countFiscalWeeksInRange(startKey, endKey) {
+  if (!startKey || !endKey || startKey > endKey) return 0;
+  const weeks = new Set();
+  let cursor = dateFromKey(startKey);
+  const end = dateFromKey(endKey);
+  while (cursor <= end) {
+    weeks.add(getFiscalWeekStartKey(dateKey(cursor)));
+    cursor = addDays(cursor, 1);
+  }
+  return weeks.size;
+}
+
+function getFiscalWeekStartKey(key) {
+  const date = dateFromKey(key);
+  return dateKey(addDays(date, -date.getUTCDay()));
+}
+
+function applyComparisonBasis(records, basis) {
+  if (!basis?.hasComparison) return [];
+  const scale = Number(basis.scale);
+  if (!Number.isFinite(scale) || scale === 1) return records;
+  return records.map((record) => {
+    const weighted = Object.create(record);
+    weighted.__metricWeight = scale;
+    return weighted;
+  });
 }
 
 function ensureDateDefaults(force = false) {
@@ -5954,6 +6103,23 @@ function isUnassignedAttributeValue(value) {
   return UNASSIGNED_ATTRIBUTE_VALUES.has(cleanText(value).toLocaleLowerCase());
 }
 
+function isCustomerTypeValue(value) {
+  return CUSTOMER_TYPE_VALUES.has(cleanText(value).toLocaleLowerCase());
+}
+
+function repairMisplacedCustomerType(record) {
+  const candidateKeys = ["customerType", "collection", "franchise"];
+  const misplacedValue = candidateKeys.map((key) => record[key]).find(isCustomerTypeValue);
+  if (!misplacedValue) return record;
+
+  if (isBlankValue(record.customerType) || !record.customerType || isCustomerTypeValue(record.customerType)) {
+    record.customerType = cleanDimension(misplacedValue);
+  }
+  if (isCustomerTypeValue(record.collection)) record.collection = BLANK;
+  if (isCustomerTypeValue(record.franchise)) record.franchise = BLANK;
+  return record;
+}
+
 function appendItems(target, items) {
   for (let index = 0; index < items.length; index += ARRAY_APPEND_CHUNK_SIZE) {
     const end = Math.min(index + ARRAY_APPEND_CHUNK_SIZE, items.length);
@@ -5987,6 +6153,7 @@ function hydrateRecord(record) {
     franchise: cleanDimension(record.franchise),
     status: normalizeStatus(record.status, record)
   };
+  repairMisplacedCustomerType(hydrated);
   hydrated.region = getRegion(hydrated.shippingProvince);
   hydrated.orderKey = getOrderKey(hydrated);
   hydrated.rowKey = cleanText(hydrated.rowKey) || `${hydrated.sourceHash}|row:${hydrated.sourceRow}`;
@@ -6062,8 +6229,33 @@ function percentChange(current, comparison) {
   return (current - comparison) / Math.abs(comparison);
 }
 
+function metricWeight(record) {
+  const weight = Number(record?.__metricWeight);
+  return Number.isFinite(weight) && weight > 0 ? weight : 1;
+}
+
+function metricValue(record, key) {
+  return (Number(record?.[key]) || 0) * metricWeight(record);
+}
+
+function addWeightedOrder(target, record) {
+  if (!record?.orderKey) return;
+  if (!target.has(record.orderKey)) target.set(record.orderKey, metricWeight(record));
+}
+
+function sumMapValues(map) {
+  let total = 0;
+  for (const value of map.values()) total += Number(value) || 0;
+  return total;
+}
+
+function getAggregateOrderCount(aggregate) {
+  if (aggregate?.orderWeights instanceof Map) return sumMapValues(aggregate.orderWeights);
+  return aggregate?.orders?.size || 0;
+}
+
 function sum(records, key) {
-  return records.reduce((total, record) => total + (Number(record[key]) || 0), 0);
+  return records.reduce((total, record) => total + metricValue(record, key), 0);
 }
 
 function formatCurrency(value) {
