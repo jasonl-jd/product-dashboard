@@ -1115,6 +1115,25 @@ th.numeric {
   max-width: min(34ch, 28vw);
 }
 
+.pivot-table .pivot-value-cell.is-child {
+  color: var(--muted);
+}
+
+.pivot-table .pivot-value-label.is-child {
+  margin-left: 10px;
+  padding-left: 12px;
+  border-left: 2px solid rgba(255, 221, 0, 0.42);
+}
+
+.pivot-row-parent td {
+  background: rgba(255, 221, 0, 0.035);
+  font-weight: 800;
+}
+
+.pivot-row-child td {
+  background: rgba(255, 255, 255, 0.012);
+}
+
 .pivot-table .col-status {
   width: 12ch;
   min-width: 10ch;
@@ -1149,6 +1168,12 @@ th.numeric {
 .pivot-table .col-unitChangePct {
   width: 8ch;
   min-width: 8ch;
+}
+
+.pivot-table .col-parentSalesShare,
+.pivot-table .col-parentUnitsShare {
+  width: 11ch;
+  min-width: 10ch;
 }
 
 .pivot-table .pivot-bar-cell {

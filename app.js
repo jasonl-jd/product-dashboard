@@ -111,6 +111,8 @@ const SORTERS = {
   salesShare: (row) => row.salesShare,
   netUnits: (row) => row.netUnits,
   unitsShare: (row) => row.unitsShare,
+  parentSalesShare: (row) => row.parentSalesShare ?? Number.NEGATIVE_INFINITY,
+  parentUnitsShare: (row) => row.parentUnitsShare ?? Number.NEGATIVE_INFINITY,
   orders: (row) => row.orders,
   compareSales: (row) => row.compareSales,
   change: (row) => row.change,
@@ -126,6 +128,8 @@ const PIVOT_COLUMN_DEFS = [
   { key: "salesShare", label: "% Sales", numeric: true },
   { key: "netUnits", label: "Net Units", numeric: true },
   { key: "unitsShare", label: "% Units", numeric: true },
+  { key: "parentSalesShare", label: "% Parent Sales", numeric: true },
+  { key: "parentUnitsShare", label: "% Parent Units", numeric: true },
   { key: "compareSales", label: "Compare Sales", numeric: true },
   { key: "change", label: "Change", numeric: true },
   { key: "changePct", label: "Change %", numeric: true },
@@ -315,6 +319,7 @@ function collectDom() {
     previousPeriod: document.querySelector("#previous-period"),
     refreshData: document.querySelector("#refresh-data"),
     dimensionSelect: document.querySelector("#dimension-select"),
+    breakdownSelect: document.querySelector("#breakdown-select"),
     sortSelect: document.querySelector("#sort-select"),
     sortDir: document.querySelector("#sort-dir"),
     rowLimit: document.querySelector("#row-limit"),
@@ -408,6 +413,7 @@ function bindEvents() {
   dom.allDates.addEventListener("click", setAllDates);
   dom.previousPeriod.addEventListener("click", () => setPreviousPeriod(false));
   dom.dimensionSelect.addEventListener("change", handlePivotDimensionChange);
+  dom.breakdownSelect?.addEventListener("change", handlePivotBreakdownChange);
   dom.sortSelect.addEventListener("change", renderAll);
   dom.sortDir.addEventListener("change", renderAll);
   dom.rowLimit.addEventListener("change", renderAll);
@@ -907,6 +913,15 @@ function handlePivotDimensionChange() {
   closePivotNameFilterMenu();
   state.pivotNameSearch = "";
   if (dom.pivotNameFilterSearch) dom.pivotNameFilterSearch.value = "";
+  updateBreakdownSelectOptions();
+  renderAll();
+}
+
+function handlePivotBreakdownChange() {
+  closePivotNameFilterMenu();
+  state.pivotNameSearch = "";
+  if (dom.pivotNameFilterSearch) dom.pivotNameFilterSearch.value = "";
+  updateBreakdownSelectOptions();
   renderAll();
 }
 
@@ -957,7 +972,7 @@ function showAllPivotNames() {
 
 function hideVisiblePivotNames() {
   const exclusions = getActivePivotNameExclusions();
-  getSearchedPivotNameValues().forEach((value) => exclusions.add(value));
+  getSearchedPivotNameRows().forEach((row) => exclusions.add(getPivotNameKey(row)));
   renderPivotOutputs();
 }
 
@@ -1101,6 +1116,24 @@ function populateDimensionSelect() {
   dom.dimensionSelect.innerHTML = DIMENSIONS
     .map((dimension) => `<option value="${dimension.key}">${escapeHtml(dimension.label)}</option>`)
     .join("");
+  if (dom.breakdownSelect) {
+    dom.breakdownSelect.innerHTML = [
+      `<option value="">None</option>`,
+      ...DIMENSIONS.map((dimension) => `<option value="${dimension.key}">${escapeHtml(dimension.label)}</option>`)
+    ].join("");
+    updateBreakdownSelectOptions();
+  }
+}
+
+function updateBreakdownSelectOptions() {
+  if (!dom.breakdownSelect || !dom.dimensionSelect) return;
+  const activeKey = dom.dimensionSelect.value;
+  Array.from(dom.breakdownSelect.options).forEach((option) => {
+    option.disabled = Boolean(option.value && option.value === activeKey);
+  });
+  if (dom.breakdownSelect.value === activeKey) {
+    dom.breakdownSelect.value = "";
+  }
 }
 
 function initializeColumnOrders() {
@@ -2576,8 +2609,8 @@ function clearAllFilters() {
     state.filters[dimension.key].clear();
     state.filterExclusions[dimension.key]?.clear();
     state.filterAllSelected[dimension.key] = false;
-    state.pivotNameExclusions[dimension.key]?.clear();
   }
+  Object.values(state.pivotNameExclusions).forEach((exclusions) => exclusions?.clear());
   state.pivotNameSearch = "";
   if (dom.pivotNameFilterSearch) dom.pivotNameFilterSearch.value = "";
   renderAll();
@@ -3923,6 +3956,11 @@ function formatTrendMonthLabel(key) {
 
 function buildPivot(currentRecords, comparisonRecords, hasComparison) {
   const dimension = getActiveDimension();
+  const breakdown = getActiveBreakdownDimension();
+  if (breakdown) {
+    return buildNestedPivot(currentRecords, comparisonRecords, hasComparison, dimension, breakdown);
+  }
+
   const currentPivotRecords = currentRecords.filter((record) => !isHiddenResultValue(record[dimension.key]));
   const comparisonPivotRecords = comparisonRecords.filter((record) => !isHiddenResultValue(record[dimension.key]));
   const currentMap = aggregateByDimension(currentPivotRecords, dimension.key);
@@ -3939,12 +3977,20 @@ function buildPivot(currentRecords, comparisonRecords, hasComparison) {
 
     return {
       value,
+      displayValue: value,
+      filterLabel: value,
+      pivotKey: `row:${encodePivotKeyPart(value)}`,
+      rowType: "single",
+      level: 0,
+      hasBreakdown: false,
       status: current.status || comparison.status || "",
       netSales: current.netSales,
       netUnits: current.netUnits,
       orders: getAggregateOrderCount(current),
       salesShare: totalSales ? current.netSales / totalSales : 0,
       unitsShare: totalUnits ? current.netUnits / totalUnits : 0,
+      parentSalesShare: null,
+      parentUnitsShare: null,
       hasComparison,
       compareSales: hasComparison ? comparison.netSales : null,
       compareUnits: hasComparison ? comparison.netUnits : null,
@@ -3956,6 +4002,111 @@ function buildPivot(currentRecords, comparisonRecords, hasComparison) {
   });
 
   return sortRows(rows);
+}
+
+function buildNestedPivot(currentRecords, comparisonRecords, hasComparison, dimension, breakdown) {
+  const currentPivotRecords = currentRecords.filter((record) => (
+    !isHiddenResultValue(record[dimension.key]) && !isHiddenResultValue(record[breakdown.key])
+  ));
+  const comparisonPivotRecords = comparisonRecords.filter((record) => (
+    !isHiddenResultValue(record[dimension.key]) && !isHiddenResultValue(record[breakdown.key])
+  ));
+  const currentMap = aggregateByNestedDimension(currentPivotRecords, dimension.key, breakdown.key);
+  const compareMap = hasComparison ? aggregateByNestedDimension(comparisonPivotRecords, dimension.key, breakdown.key) : new Map();
+  const totalSales = sum(currentPivotRecords, "netSales");
+  const totalUnits = sum(currentPivotRecords, "netUnits");
+  const parentValues = hasComparison ? new Set([...currentMap.keys(), ...compareMap.keys()]) : new Set(currentMap.keys());
+  const parentRows = [];
+  const childRowsByParent = new Map();
+
+  parentValues.forEach((parentValue) => {
+    const currentParent = currentMap.get(parentValue)?.total || emptyAggregate();
+    const compareParent = compareMap.get(parentValue)?.total || emptyAggregate();
+    parentRows.push(buildPivotRow({
+      value: parentValue,
+      displayValue: parentValue,
+      filterLabel: parentValue,
+      pivotKey: `parent:${encodePivotKeyPart(parentValue)}`,
+      rowType: "parent",
+      level: 0,
+      parentValue,
+      breakdownValue: "",
+      current: currentParent,
+      comparison: compareParent,
+      totalSales,
+      totalUnits,
+      parentSales: currentParent.netSales,
+      parentUnits: currentParent.netUnits,
+      hasComparison,
+      hasBreakdown: true
+    }));
+
+    const currentChildren = currentMap.get(parentValue)?.children || new Map();
+    const compareChildren = compareMap.get(parentValue)?.children || new Map();
+    const childValues = hasComparison ? new Set([...currentChildren.keys(), ...compareChildren.keys()]) : new Set(currentChildren.keys());
+    const childRows = Array.from(childValues).map((childValue) => buildPivotRow({
+      value: childValue,
+      displayValue: childValue,
+      filterLabel: `${parentValue} / ${childValue}`,
+      pivotKey: `child:${encodePivotKeyPart(parentValue)}:${encodePivotKeyPart(childValue)}`,
+      rowType: "child",
+      level: 1,
+      parentValue,
+      breakdownValue: childValue,
+      current: currentChildren.get(childValue) || emptyAggregate(),
+      comparison: compareChildren.get(childValue) || emptyAggregate(),
+      totalSales,
+      totalUnits,
+      parentSales: currentParent.netSales,
+      parentUnits: currentParent.netUnits,
+      hasComparison,
+      hasBreakdown: true
+    }));
+    childRowsByParent.set(parentValue, sortRows(childRows));
+  });
+
+  return sortRows(parentRows).flatMap((parentRow) => [
+    parentRow,
+    ...(childRowsByParent.get(parentRow.value) || [])
+  ]);
+}
+
+function buildPivotRow(options) {
+  const current = options.current || emptyAggregate();
+  const comparison = options.comparison || emptyAggregate();
+  const change = options.hasComparison ? current.netSales - comparison.netSales : null;
+  const unitChange = options.hasComparison ? current.netUnits - comparison.netUnits : null;
+  const parentSales = Number(options.parentSales) || 0;
+  const parentUnits = Number(options.parentUnits) || 0;
+
+  return {
+    value: options.value,
+    displayValue: options.displayValue || options.value,
+    filterLabel: options.filterLabel || options.value,
+    pivotKey: options.pivotKey || `row:${encodePivotKeyPart(options.value)}`,
+    rowType: options.rowType || "single",
+    level: options.level || 0,
+    parentValue: options.parentValue || "",
+    breakdownValue: options.breakdownValue || "",
+    hasBreakdown: Boolean(options.hasBreakdown),
+    parentNetSales: parentSales,
+    parentNetUnits: parentUnits,
+    status: current.status || comparison.status || "",
+    netSales: current.netSales,
+    netUnits: current.netUnits,
+    orders: getAggregateOrderCount(current),
+    salesShare: options.totalSales ? current.netSales / options.totalSales : 0,
+    unitsShare: options.totalUnits ? current.netUnits / options.totalUnits : 0,
+    parentSalesShare: options.hasBreakdown ? (options.level === 0 ? (parentSales ? 1 : 0) : (parentSales ? current.netSales / parentSales : 0)) : null,
+    parentUnitsShare: options.hasBreakdown ? (options.level === 0 ? (parentUnits ? 1 : 0) : (parentUnits ? current.netUnits / parentUnits : 0)) : null,
+    hasComparison: options.hasComparison,
+    compareSales: options.hasComparison ? comparison.netSales : null,
+    compareUnits: options.hasComparison ? comparison.netUnits : null,
+    change,
+    unitChange,
+    changePct: options.hasComparison ? percentChange(current.netSales, comparison.netSales) : null,
+    unitChangePct: options.hasComparison ? percentChange(current.netUnits, comparison.netUnits) : null
+  };
 }
 
 function buildStatusSplit(currentRecords, comparisonRecords, hasComparison) {
@@ -4087,17 +4238,50 @@ function aggregateByDimension(records, key) {
     const value = record[key] || BLANK;
     if (isHiddenResultValue(value)) continue;
     if (!map.has(value)) map.set(value, emptyAggregate());
-    const aggregate = map.get(value);
-    aggregate.netSales += metricValue(record, "netSales");
-    aggregate.netUnits += metricValue(record, "netUnits");
-    addWeightedOrder(aggregate.orderWeights, record);
-    if (record.orderKey) aggregate.orders.add(record.orderKey);
-    addStatusBreakdown(aggregate.statusBreakdown, record);
+    addRecordToAggregate(map.get(value), record);
   }
   map.forEach((aggregate) => {
     aggregate.status = getStatusLabel(aggregate.statusBreakdown);
   });
   return map;
+}
+
+function aggregateByNestedDimension(records, parentKey, childKey) {
+  const map = new Map();
+  for (const record of records) {
+    const parentValue = record[parentKey] || BLANK;
+    const childValue = record[childKey] || BLANK;
+    if (isHiddenResultValue(parentValue) || isHiddenResultValue(childValue)) continue;
+
+    if (!map.has(parentValue)) {
+      map.set(parentValue, {
+        total: emptyAggregate(),
+        children: new Map()
+      });
+    }
+
+    const parent = map.get(parentValue);
+    addRecordToAggregate(parent.total, record);
+    if (!parent.children.has(childValue)) parent.children.set(childValue, emptyAggregate());
+    addRecordToAggregate(parent.children.get(childValue), record);
+  }
+
+  map.forEach((parent) => {
+    parent.total.status = getStatusLabel(parent.total.statusBreakdown);
+    parent.children.forEach((aggregate) => {
+      aggregate.status = getStatusLabel(aggregate.statusBreakdown);
+    });
+  });
+
+  return map;
+}
+
+function addRecordToAggregate(aggregate, record) {
+  aggregate.netSales += metricValue(record, "netSales");
+  aggregate.netUnits += metricValue(record, "netUnits");
+  addWeightedOrder(aggregate.orderWeights, record);
+  if (record.orderKey) aggregate.orders.add(record.orderKey);
+  addStatusBreakdown(aggregate.statusBreakdown, record);
 }
 
 function emptyAggregate() {
@@ -4277,62 +4461,114 @@ function renderPivotOutputs() {
 function getVisiblePivotRows() {
   const exclusions = getActivePivotNameExclusions();
   const rows = exclusions.size
-    ? state.pivotRows.filter((row) => !exclusions.has(row.value))
+    ? state.pivotRows.filter((row) => !exclusions.has(getPivotNameKey(row)))
     : state.pivotRows;
   return recalculatePivotShares(rows);
 }
 
 function recalculatePivotShares(rows) {
-  const totalSales = sum(rows, "netSales");
-  const totalUnits = sum(rows, "netUnits");
+  const hasBreakdown = rows.some((row) => row.hasBreakdown);
+  const parentTotals = new Map();
+
+  if (hasBreakdown) {
+    rows.forEach((row) => {
+      const key = row.parentValue || row.value;
+      if (!key) return;
+      const existing = parentTotals.get(key) || { netSales: 0, netUnits: 0, hasParent: false };
+      if (row.level === 0) {
+        parentTotals.set(key, {
+          netSales: Number(row.netSales) || 0,
+          netUnits: Number(row.netUnits) || 0,
+          hasParent: true
+        });
+        return;
+      }
+      if (!existing.hasParent) {
+        existing.netSales += Number(row.netSales) || 0;
+        existing.netUnits += Number(row.netUnits) || 0;
+        parentTotals.set(key, existing);
+      }
+    });
+  }
+
+  const totalSales = hasBreakdown
+    ? Array.from(parentTotals.values()).reduce((total, parent) => total + parent.netSales, 0)
+    : sum(rows, "netSales");
+  const totalUnits = hasBreakdown
+    ? Array.from(parentTotals.values()).reduce((total, parent) => total + parent.netUnits, 0)
+    : sum(rows, "netUnits");
+
   return rows.map((row) => ({
     ...row,
     salesShare: totalSales ? row.netSales / totalSales : 0,
-    unitsShare: totalUnits ? row.netUnits / totalUnits : 0
+    unitsShare: totalUnits ? row.netUnits / totalUnits : 0,
+    parentSalesShare: recalculateParentShare(row, "netSales"),
+    parentUnitsShare: recalculateParentShare(row, "netUnits")
   }));
 }
 
+function recalculateParentShare(row, key) {
+  if (!row.hasBreakdown) return null;
+  const parentTotal = key === "netSales" ? row.parentNetSales : row.parentNetUnits;
+  const value = key === "netSales" ? row.netSales : row.netUnits;
+  if (row.level === 0) return parentTotal ? 1 : 0;
+  return parentTotal ? value / parentTotal : 0;
+}
+
 function getActivePivotNameExclusions() {
-  const key = getActiveDimension().key;
+  const key = getActivePivotNameFilterKey();
   if (!state.pivotNameExclusions[key]) state.pivotNameExclusions[key] = new Set();
   return state.pivotNameExclusions[key];
+}
+
+function getActivePivotNameFilterKey() {
+  const dimension = getActiveDimension();
+  const breakdown = getActiveBreakdownDimension();
+  return breakdown ? `${dimension.key}|${breakdown.key}` : dimension.key;
+}
+
+function getPivotNameKey(row) {
+  return row?.pivotKey || `row:${encodePivotKeyPart(row?.value || "")}`;
+}
+
+function encodePivotKeyPart(value) {
+  return encodeURIComponent(cleanText(value));
 }
 
 function getPivotNameRows() {
   return (state.pivotRows || []).filter((row) => !isHiddenResultValue(row.value));
 }
 
-function getPivotNameValues() {
-  return getPivotNameRows().map((row) => row.value);
-}
-
-function getSearchedPivotNameValues() {
+function getSearchedPivotNameRows() {
   const query = cleanText(state.pivotNameSearch).toLocaleLowerCase();
-  const values = getPivotNameValues();
-  if (!query) return values;
-  return values.filter((value) => cleanText(value).toLocaleLowerCase().includes(query));
+  const rows = getPivotNameRows();
+  if (!query) return rows;
+  return rows.filter((row) => {
+    const label = cleanText(row.filterLabel || row.displayValue || row.value).toLocaleLowerCase();
+    return label.includes(query);
+  });
 }
 
 function renderPivotNameFilter() {
   if (!dom.pivotNameFilterButton || !dom.pivotNameFilterOptions) return;
 
   const dimension = getActiveDimension();
+  const breakdown = getActiveBreakdownDimension();
+  const filterLabel = breakdown ? `${dimension.label} / ${breakdown.label}` : dimension.label;
   const exclusions = getActivePivotNameExclusions();
   const rows = getPivotNameRows();
   const visibleRows = getVisiblePivotRows();
-  const hiddenCount = rows.filter((row) => exclusions.has(row.value)).length;
+  const hiddenCount = rows.filter((row) => exclusions.has(getPivotNameKey(row))).length;
   const allCount = rows.length;
-  const searchedRows = getSearchedPivotNameValues()
-    .map((value) => rows.find((row) => row.value === value))
-    .filter(Boolean);
+  const searchedRows = getSearchedPivotNameRows();
   const displayedRows = searchedRows.slice(0, MAX_PIVOT_NAME_FILTER_OPTIONS);
   const hasMore = searchedRows.length > displayedRows.length;
 
   dom.pivotNameFilterButton.disabled = !allCount;
-  dom.pivotNameFilterButton.setAttribute("aria-label", `Filter ${dimension.label} names`);
+  dom.pivotNameFilterButton.setAttribute("aria-label", `Filter ${filterLabel} names`);
   dom.pivotNameFilterLabel.textContent = hiddenCount
-    ? `${dimension.label}: ${numberFormat.format(visibleRows.length)}/${numberFormat.format(allCount)} shown`
-    : `${dimension.label}: All`;
+    ? `${filterLabel}: ${numberFormat.format(visibleRows.length)}/${numberFormat.format(allCount)} shown`
+    : `${filterLabel}: All`;
   if (dom.pivotNameFilterSearch && dom.pivotNameFilterSearch.value !== state.pivotNameSearch) {
     dom.pivotNameFilterSearch.value = state.pivotNameSearch;
   }
@@ -4348,12 +4584,14 @@ function renderPivotNameFilter() {
 }
 
 function renderPivotNameFilterOption(row, exclusions) {
-  const id = `pivot-name-${hashString(`${getActiveDimension().key}:${row.value}`)}`;
-  const checked = !exclusions.has(row.value);
+  const key = getPivotNameKey(row);
+  const label = row.filterLabel || row.displayValue || row.value;
+  const id = `pivot-name-${hashString(`${getActivePivotNameFilterKey()}:${key}`)}`;
+  const checked = !exclusions.has(key);
   return `
-    <label class="pivot-filter-option" for="${id}" title="${escapeHtml(row.value)}">
-      <input id="${id}" type="checkbox" data-pivot-name-option value="${escapeHtml(row.value)}" ${checked ? "checked" : ""}>
-      <span>${escapeHtml(row.value)}</span>
+    <label class="pivot-filter-option" for="${id}" title="${escapeHtml(label)}">
+      <input id="${id}" type="checkbox" data-pivot-name-option value="${escapeHtml(key)}" ${checked ? "checked" : ""}>
+      <span>${escapeHtml(label)}</span>
       <em>${formatCurrency(row.netSales)}</em>
     </label>
   `;
@@ -4361,15 +4599,19 @@ function renderPivotNameFilterOption(row, exclusions) {
 
 function renderPivotTable(rows) {
   const dimension = getActiveDimension();
+  const breakdown = getActiveBreakdownDimension();
   const limit = getRowLimit();
   const visibleRows = Number.isFinite(limit) ? rows.slice(0, limit) : rows;
   const columns = getTableColumns("pivot");
-  const hiddenCount = getPivotNameRows().filter((row) => getActivePivotNameExclusions().has(row.value)).length;
+  const hiddenCount = getPivotNameRows().filter((row) => getActivePivotNameExclusions().has(getPivotNameKey(row))).length;
   const maxAbsNetSales = getMaxAbsValue(visibleRows, "netSales");
+  const headingBase = breakdown
+    ? `Performance by ${dimension.label} / ${breakdown.label}`
+    : `Performance by ${dimension.label}`;
 
   dom.pivotHeading.textContent = hiddenCount
-    ? `Performance by ${dimension.label} (${numberFormat.format(rows.length)} shown)`
-    : `Performance by ${dimension.label}`;
+    ? `${headingBase} (${numberFormat.format(rows.length)} shown)`
+    : headingBase;
   dom.pivotThead.innerHTML = `<tr>${columns.map((column) => renderTableHeader("pivot", column)).join("")}</tr>`;
   updateSortHeaderStates();
 
@@ -4379,10 +4621,15 @@ function renderPivotTable(rows) {
   }
 
   dom.pivotTbody.innerHTML = visibleRows.map((row) => `
-    <tr>
+    <tr class="${getPivotRowClass(row)}">
       ${columns.map((column) => renderPivotCell(row, column, { maxAbsNetSales })).join("")}
     </tr>
   `).join("");
+}
+
+function getPivotRowClass(row) {
+  if (!row.hasBreakdown) return "";
+  return ["pivot-row", row.rowType ? `pivot-row-${row.rowType}` : ""].filter(Boolean).join(" ");
 }
 
 function renderTableHeader(table, column) {
@@ -4397,7 +4644,11 @@ function renderTableHeader(table, column) {
 }
 
 function renderPivotCell(row, column, options = {}) {
-  if (column.key === "value" || column.key === "status") {
+  if (column.key === "value") {
+    return renderPivotValueCell(row, column);
+  }
+
+  if (column.key === "status") {
     const value = row[column.key] || "";
     return renderTextCell(value, column);
   }
@@ -4408,6 +4659,15 @@ function renderPivotCell(row, column, options = {}) {
 
   const value = formatPivotCellValue(row, column.key);
   return `<td class="${tableCellClass(column, getDeltaClass(row, column.key))}">${value}</td>`;
+}
+
+function renderPivotValueCell(row, column) {
+  const label = row.displayValue || row.value || "";
+  const tooltip = row.filterLabel || label;
+  const isChild = Number(row.level) > 0;
+  const className = isChild ? "clip pivot-value-label is-child" : "clip pivot-value-label";
+  const cellClass = tableCellClass(column, isChild ? "pivot-value-cell is-child" : "pivot-value-cell");
+  return `<td class="${cellClass}">${renderClip(label, tooltip, className)}</td>`;
 }
 
 function renderPivotSalesCell(row, column, options) {
@@ -4447,6 +4707,8 @@ function formatPivotCellValue(row, key) {
   if (key === "salesShare") return formatPercent(row.salesShare);
   if (key === "netUnits") return formatNumber(row.netUnits);
   if (key === "unitsShare") return formatPercent(row.unitsShare);
+  if (key === "parentSalesShare") return row.parentSalesShare === null ? "" : formatPercent(row.parentSalesShare);
+  if (key === "parentUnitsShare") return row.parentUnitsShare === null ? "" : formatPercent(row.parentUnitsShare);
   if (key === "compareSales") return row.hasComparison ? formatCurrency(row.compareSales) : "";
   if (key === "change") return row.hasComparison ? formatCurrency(row.change) : "";
   if (key === "unitChange") return row.hasComparison ? formatNumber(row.unitChange) : "";
@@ -5582,20 +5844,38 @@ function getActiveDimension() {
   return DIMENSIONS.find((dimension) => dimension.key === dom.dimensionSelect.value) || DIMENSIONS[0];
 }
 
+function getActiveBreakdownDimension() {
+  const key = dom.breakdownSelect?.value || "";
+  const dimension = DIMENSIONS.find((item) => item.key === key);
+  return dimension && dimension.key !== getActiveDimension().key ? dimension : null;
+}
+
 function getRowLimit() {
   return dom.rowLimit.value === "all" ? Infinity : Number(dom.rowLimit.value);
 }
 
 function exportPivotCsv() {
   const dimension = getActiveDimension();
+  const breakdown = getActiveBreakdownDimension();
   const rows = getVisiblePivotRows();
   const columns = getTableColumns("pivot");
-  const headers = columns.map((column) => column.key === "value" ? dimension.label : column.label);
+  const headers = columns.flatMap((column) => {
+    if (column.key !== "value") return [column.label];
+    return breakdown ? [dimension.label, breakdown.label] : [dimension.label];
+  });
   const lines = [
     headers,
-    ...rows.map((row) => columns.map((column) => getPivotExportValue(row, column.key)))
+    ...rows.map((row) => columns.flatMap((column) => {
+      if (column.key !== "value") return [getPivotExportValue(row, column.key)];
+      if (!breakdown) return [row.value];
+      return [
+        row.level === 0 ? row.value : row.parentValue,
+        row.level > 0 ? row.value : ""
+      ];
+    }))
   ];
-  downloadFile(`pivot-${dimension.key}-${todayKey()}.csv`, lines.map(csvLine).join("\n"), "text/csv");
+  const breakdownPart = breakdown ? `-${breakdown.key}` : "";
+  downloadFile(`pivot-${dimension.key}${breakdownPart}-${todayKey()}.csv`, lines.map(csvLine).join("\n"), "text/csv");
 }
 
 function exportProductCsv() {
@@ -5685,6 +5965,8 @@ function getPivotExportValue(row, key) {
   if (key === "salesShare") return row.salesShare;
   if (key === "netUnits") return row.netUnits;
   if (key === "unitsShare") return row.unitsShare;
+  if (key === "parentSalesShare") return row.parentSalesShare === null ? "" : row.parentSalesShare;
+  if (key === "parentUnitsShare") return row.parentUnitsShare === null ? "" : row.parentUnitsShare;
   if (key === "compareSales") return row.hasComparison ? row.compareSales : "";
   if (key === "change") return row.hasComparison ? row.change : "";
   if (key === "unitChange") return row.hasComparison ? row.unitChange : "";
