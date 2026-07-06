@@ -1152,6 +1152,7 @@ th.numeric {
 .pivot-table .col-netSales,
 .pivot-table .col-compareSales,
 .pivot-table .col-change,
+.pivot-table .col-compareUnits,
 .pivot-table .col-unitChange {
   width: 12ch;
   min-width: 11ch;
@@ -1395,6 +1396,81 @@ th.numeric {
 
 .all-region-option {
   border-color: rgba(255, 221, 0, 0.48);
+}
+
+.trend-breakdown-filter {
+  margin-top: 0;
+}
+
+.trend-breakdown-filter.is-disabled {
+  opacity: 0.72;
+}
+
+.trend-breakdown-body {
+  display: grid;
+  gap: 10px;
+  padding: 0 12px 12px;
+}
+
+.trend-breakdown-parent-control {
+  display: grid;
+  gap: 5px;
+}
+
+.trend-breakdown-parent-control span {
+  color: var(--muted);
+  font-size: 10px;
+  font-family: var(--font-primary);
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.trend-breakdown-parent-control select {
+  min-height: 34px;
+}
+
+.trend-parent-total-option {
+  width: fit-content;
+}
+
+.trend-breakdown-options {
+  padding: 0;
+}
+
+.trend-breakdown-option {
+  max-width: 260px;
+}
+
+.trend-breakdown-option.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.trend-breakdown-option span {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trend-breakdown-option em {
+  color: var(--muted);
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 760;
+}
+
+.trend-breakdown-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.trend-breakdown-empty {
+  width: 100%;
+  padding: 8px 0;
 }
 
 .trend-summary {
@@ -1655,6 +1731,10 @@ th.numeric {
   box-shadow: none;
 }
 
+.legend-swatch.breakdown-swatch {
+  background: var(--compare-color, var(--green));
+}
+
 .trend-tooltip {
   opacity: 0;
   pointer-events: none;
@@ -1768,6 +1848,11 @@ th.numeric {
 .compare-period-product-line.compare-units-line {
   stroke-dasharray: 3 7;
   stroke-width: 2.2;
+}
+
+.trend-breakdown-line {
+  opacity: 0.88;
+  stroke-width: 2.3;
 }
 
 .compare-point-dot {

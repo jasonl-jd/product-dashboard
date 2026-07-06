@@ -12,11 +12,11 @@ const DATA_CACHE_STORE = "parsed-files";
 const DATA_CACHE_VERSION = "parsed-csv-v10";
 const COMPILED_DATA_CACHE_VERSION = "compiled-json-v1";
 const PRODUCT_PANEL_COLLAPSED_STORAGE_KEY = "product-dashboard:product-panel-collapsed";
-const COLUMN_SETTINGS_VERSION = 2;
+const COLUMN_SETTINGS_VERSION = 3;
 const COLUMN_SETTINGS_VERSION_STORAGE_KEY = "product-dashboard:column-settings-version";
 const COLUMN_SETTINGS_MIGRATION_VISIBLE_KEYS = {
   status: ["value", "unitChange", "unitChangePct"],
-  pivot: ["unitChange", "unitChangePct"],
+  pivot: ["compareUnits", "unitChange", "unitChangePct"],
   product: ["unitChange", "unitChangePct"]
 };
 const BLANK = "(blank)";
@@ -29,9 +29,13 @@ const TREND_SUGGESTION_LIMIT = 20;
 const TREND_SKU_SUGGESTION_MIN = 5;
 const TREND_TEXT_SUGGESTION_MIN = 4;
 const TREND_METRIC_OPTIONS = new Set(["sales", "units", "both"]);
+const TREND_BREAKDOWN_DEFAULT_LIMIT = 5;
+const TREND_BREAKDOWN_MAX_SELECTED = 8;
+const TREND_BREAKDOWN_OPTION_LIMIT = 80;
 const TREND_MONTH_ABBRS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const PRODUCT_COMPARE_LIMIT = 4;
 const PRODUCT_COMPARE_COLORS = ["#ffdd00", "#4fb6ff", "#d71920", "#f7f7f2"];
+const TREND_BREAKDOWN_COLORS = ["#ffdd00", "#4fb6ff", "#d71920", "#9bdc6a", "#c792ea", "#f7b500", "#ff7ab6", "#7ee0d2", "#a0c4ff"];
 const PRODUCT_COMPARE_REGION_COLORS = ["#ffdd00", "#4fb6ff", "#d71920", "#9bdc6a", "#c792ea", "#f7b500", "#ff7ab6", "#7ee0d2", "#a0c4ff", "#ffa552", "#82e0aa", "#f7f7f2"];
 const PRICE_STATUS_LABELS = ["Full Price", "Markdown"];
 const STATUS_DISPLAY_ORDER = ["Full Price", "Markdown", "Return"];
@@ -115,6 +119,7 @@ const SORTERS = {
   parentUnitsShare: (row) => row.parentUnitsShare ?? Number.NEGATIVE_INFINITY,
   orders: (row) => row.orders,
   compareSales: (row) => row.compareSales,
+  compareUnits: (row) => row.compareUnits,
   change: (row) => row.change,
   changePct: (row) => row.changePct ?? Number.NEGATIVE_INFINITY,
   unitChange: (row) => row.unitChange,
@@ -131,6 +136,7 @@ const PIVOT_COLUMN_DEFS = [
   { key: "parentSalesShare", label: "% Parent Sales", numeric: true },
   { key: "parentUnitsShare", label: "% Parent Units", numeric: true },
   { key: "compareSales", label: "Compare Sales", numeric: true },
+  { key: "compareUnits", label: "Compare Units", numeric: true },
   { key: "change", label: "Change", numeric: true },
   { key: "changePct", label: "Change %", numeric: true },
   { key: "unitChange", label: "Units Change", numeric: true },
@@ -242,6 +248,9 @@ const state = {
   trendGrain: "week",
   trendMetric: "sales",
   trendShowCompare: true,
+  trendBreakdownParent: "",
+  trendBreakdownValues: new Set(),
+  trendShowBreakdownParent: true,
   trendSelection: {
     active: false,
     previousPeriods: null,
@@ -348,6 +357,12 @@ function collectDom() {
     trendProductOptions: document.querySelector("#trend-product-options"),
     clearTrendProduct: document.querySelector("#clear-trend-product"),
     clearTrendSelection: document.querySelector("#clear-trend-selection"),
+    trendBreakdownFilter: document.querySelector("#trend-breakdown-filter"),
+    trendBreakdownSummary: document.querySelector("#trend-breakdown-summary"),
+    trendBreakdownParent: document.querySelector("#trend-breakdown-parent"),
+    trendBreakdownParentTotal: document.querySelector("#trend-breakdown-parent-total"),
+    trendBreakdownOptions: document.querySelector("#trend-breakdown-options"),
+    trendBreakdownNote: document.querySelector("#trend-breakdown-note"),
     trendChart: document.querySelector("#trend-chart"),
     tradeWeekLabel: document.querySelector("#trade-week-label"),
     tradeAnalysis: document.querySelector("#trade-analysis"),
@@ -434,6 +449,9 @@ function bindEvents() {
   dom.trendProductInput.addEventListener("input", handleTrendProductInput);
   dom.clearTrendProduct.addEventListener("click", clearTrendProduct);
   dom.clearTrendSelection?.addEventListener("click", resetTrendSelection);
+  dom.trendBreakdownParent?.addEventListener("change", handleTrendBreakdownParentChange);
+  dom.trendBreakdownParentTotal?.addEventListener("change", handleTrendBreakdownSelectionChange);
+  dom.trendBreakdownOptions?.addEventListener("change", handleTrendBreakdownSelectionChange);
   dom.exportTradeBrandCsv.addEventListener("click", exportTradeBrandCsv);
   dom.exportTradeRegionalCsv.addEventListener("click", exportTradeRegionalCsv);
   dom.compareGrain.addEventListener("change", handleCompareGrainChange);
@@ -913,6 +931,7 @@ function handlePivotDimensionChange() {
   closePivotNameFilterMenu();
   state.pivotNameSearch = "";
   if (dom.pivotNameFilterSearch) dom.pivotNameFilterSearch.value = "";
+  resetTrendBreakdownState();
   updateBreakdownSelectOptions();
   renderAll();
 }
@@ -921,6 +940,7 @@ function handlePivotBreakdownChange() {
   closePivotNameFilterMenu();
   state.pivotNameSearch = "";
   if (dom.pivotNameFilterSearch) dom.pivotNameFilterSearch.value = "";
+  resetTrendBreakdownState();
   updateBreakdownSelectOptions();
   renderAll();
 }
@@ -2872,6 +2892,49 @@ function clearTrendProduct() {
   renderTrendTable(getCurrentTrendRecords());
 }
 
+function handleTrendBreakdownParentChange() {
+  state.trendBreakdownParent = dom.trendBreakdownParent?.value || "";
+  state.trendBreakdownValues = new Set();
+  const records = filterTrendProductRecords(getCurrentTrendRecords());
+  if (state.trendBreakdownParent) {
+    getTrendBreakdownChildOptions(records)
+      .slice(0, TREND_BREAKDOWN_DEFAULT_LIMIT)
+      .forEach((option) => state.trendBreakdownValues.add(option.value));
+  }
+  renderTrendTable(getCurrentTrendRecords());
+}
+
+function handleTrendBreakdownSelectionChange(event) {
+  const parentTotal = event.target.closest("#trend-breakdown-parent-total");
+  if (parentTotal) {
+    state.trendShowBreakdownParent = Boolean(parentTotal.checked);
+    renderTrendTable(getCurrentTrendRecords());
+    return;
+  }
+
+  const checkbox = event.target.closest("[data-trend-breakdown-value]");
+  if (!checkbox) return;
+
+  const value = checkbox.dataset.trendBreakdownValue;
+  if (checkbox.checked) {
+    if (state.trendBreakdownValues.size >= TREND_BREAKDOWN_MAX_SELECTED) {
+      checkbox.checked = false;
+      setStatus(`Trend breakdown is capped at ${TREND_BREAKDOWN_MAX_SELECTED} selected lines.`, "error");
+      return;
+    }
+    state.trendBreakdownValues.add(value);
+  } else {
+    state.trendBreakdownValues.delete(value);
+  }
+  renderTrendTable(getCurrentTrendRecords());
+}
+
+function resetTrendBreakdownState() {
+  state.trendBreakdownParent = "";
+  state.trendBreakdownValues = new Set();
+  state.trendShowBreakdownParent = true;
+}
+
 function handleCompareProductInput() {
   state.compareProductQuery = dom.compareProductInput.value;
   renderCompareProductOptions(getCurrentTrendRecords());
@@ -2977,12 +3040,14 @@ function renderTrendTable(filteredRecords) {
   const compareTrendRecords = shouldShowTrendCompareLine()
     ? filterTrendProductRecords(getCompareTrendRecords())
     : [];
+  renderTrendBreakdownControls(trendRecords);
   const periods = getAppliedPeriods();
   const comparisonBasis = getComparisonBasis(periods);
   const rows = buildTrendRows(trendRecords, state.trendGrain, periods.currentStart, periods.currentEnd);
   const compareRows = compareTrendRecords.length
     ? buildTrendRows(compareTrendRecords, state.trendGrain, comparisonBasis.sourceStart, comparisonBasis.sourceEnd)
     : [];
+  const breakdownSeries = buildTrendBreakdownSeries(trendRecords, compareTrendRecords, rows, compareRows);
   const grainLabel = getTrendGrainLabel(state.trendGrain);
   dom.trendHeading.textContent = state.trendProductQuery ? `${grainLabel} Trend by Product` : `${grainLabel} Trend`;
 
@@ -2991,10 +3056,10 @@ function renderTrendTable(filteredRecords) {
     return;
   }
 
-  dom.trendChart.innerHTML = renderTrendLineChart(rows, compareRows);
+  dom.trendChart.innerHTML = renderTrendLineChart(rows, compareRows, breakdownSeries);
 }
 
-function renderTrendLineChart(rows, compareRows = []) {
+function renderTrendLineChart(rows, compareRows = [], breakdownSeries = []) {
   const metricMode = getTrendMetricMode();
   const showSales = metricMode !== "units";
   const showUnits = metricMode !== "sales";
@@ -3008,8 +3073,12 @@ function renderTrendLineChart(rows, compareRows = []) {
   const compareRowsForAxis = showCompare ? compareRows : [];
   const axisRows = compareRowsForAxis.length > rows.length ? compareRowsForAxis : rows;
   const axisLength = Math.max(axisRows.length, 1);
-  const salesScale = getTrendScale(rows.map((row) => row.netSales).concat(compareRowsForAxis.map((row) => row.netSales)));
-  const unitsScale = getTrendScale(rows.map((row) => row.netUnits).concat(compareRowsForAxis.map((row) => row.netUnits)));
+  const breakdownSalesValues = breakdownSeries.flatMap((item) => item.rows.map((row) => row.netSales)
+    .concat(showCompare ? (item.compareRows || []).map((row) => row.netSales) : []));
+  const breakdownUnitsValues = breakdownSeries.flatMap((item) => item.rows.map((row) => row.netUnits)
+    .concat(showCompare ? (item.compareRows || []).map((row) => row.netUnits) : []));
+  const salesScale = getTrendScale(rows.map((row) => row.netSales).concat(compareRowsForAxis.map((row) => row.netSales), breakdownSalesValues));
+  const unitsScale = getTrendScale(rows.map((row) => row.netUnits).concat(compareRowsForAxis.map((row) => row.netUnits), breakdownUnitsValues));
   const primaryScale = showSales ? salesScale : unitsScale;
   const xForAxisIndex = (index) => {
     if (axisLength <= 1) return pad.left + plotWidth / 2;
@@ -3083,6 +3152,11 @@ function renderTrendLineChart(rows, compareRows = []) {
         <div class="trend-legend" aria-hidden="true">
           ${showSales ? `<span><i class="legend-swatch sales"></i>Sales $</span>` : ""}
           ${showUnits ? `<span><i class="legend-swatch units"></i>Units</span>` : ""}
+          ${breakdownSeries.map((item) => `
+            <span title="${escapeHtml(item.legendTitle || item.legendLabel)}">
+              <i class="legend-swatch breakdown-swatch" style="--compare-color:${item.color}"></i>${escapeHtml(item.legendLabel)}
+            </span>
+          `).join("")}
           ${showCompare ? `<span><i class="legend-swatch compare-period"></i>Compare Period</span>` : ""}
         </div>
       </div>
@@ -3105,6 +3179,8 @@ function renderTrendLineChart(rows, compareRows = []) {
       ${showUnits && !showSales ? `<path d="${unitsAreaPath}" class="trend-area units-area"></path>` : ""}
       ${showCompare && showSales ? `<path d="${compareSalesLinePath}" class="trend-line sales-line compare-period-line"></path>` : ""}
       ${showCompare && showUnits ? `<path d="${compareUnitsLinePath}" class="trend-line units-line compare-period-line compare-period-units-line"></path>` : ""}
+      ${showCompare ? breakdownSeries.map((item) => renderTrendBreakdownSeriesLines(item, { showSales, showUnits, xForSeriesIndex, yForValue, salesScale, unitsScale, rowsKey: "compareRows", isCompare: true })).join("") : ""}
+      ${breakdownSeries.map((item) => renderTrendBreakdownSeriesLines(item, { showSales, showUnits, xForSeriesIndex, yForValue, salesScale, unitsScale })).join("")}
       ${showSales ? `<path d="${salesLinePath}" class="trend-line sales-line"></path>` : ""}
       ${showUnits ? `<path d="${unitsLinePath}" class="trend-line units-line"></path>` : ""}
       ${xLabelIndexes.map((index) => {
@@ -3122,6 +3198,8 @@ function renderTrendLineChart(rows, compareRows = []) {
         isCompare: true,
         trendIndex: index
       })).join("") : ""}
+      ${showCompare ? breakdownSeries.map((item) => renderTrendBreakdownSeriesPoints(item, { showSales, showUnits, xForSeriesIndex, yForValue, salesScale, unitsScale, width, height, pad, rowsKey: "compareRows", isCompare: true })).join("") : ""}
+      ${breakdownSeries.map((item) => renderTrendBreakdownSeriesPoints(item, { showSales, showUnits, xForSeriesIndex, yForValue, salesScale, unitsScale, width, height, pad })).join("")}
       ${rows.map((row, index) => renderTrendPointGroup(row, salesPoints[index], unitsPoints[index], {
         showSales,
         showUnits,
@@ -3132,6 +3210,271 @@ function renderTrendLineChart(rows, compareRows = []) {
       })).join("")}
       </svg>
     </div>
+  `;
+}
+
+function renderTrendBreakdownControls(records) {
+  if (!dom.trendBreakdownFilter || !dom.trendBreakdownParent || !dom.trendBreakdownOptions) return;
+
+  const dimension = getActiveDimension();
+  const breakdown = getActiveBreakdownDimension();
+  const hasBreakdown = Boolean(breakdown);
+  dom.trendBreakdownFilter.classList.toggle("is-disabled", !hasBreakdown);
+
+  if (!hasBreakdown) {
+    state.trendBreakdownParent = "";
+    state.trendBreakdownValues.clear();
+    dom.trendBreakdownParent.innerHTML = `<option value="">Choose a pivot breakdown first</option>`;
+    dom.trendBreakdownParent.disabled = true;
+    if (dom.trendBreakdownParentTotal) {
+      dom.trendBreakdownParentTotal.disabled = true;
+      dom.trendBreakdownParentTotal.checked = false;
+    }
+    dom.trendBreakdownOptions.innerHTML = "";
+    if (dom.trendBreakdownSummary) dom.trendBreakdownSummary.textContent = "Aggregate only";
+    if (dom.trendBreakdownNote) dom.trendBreakdownNote.textContent = "Set Pivot Breakdown By to add selectable trend lines.";
+    return;
+  }
+
+  const parentOptions = getTrendBreakdownParentOptions(records, dimension.key);
+  const validParents = new Set(parentOptions.map((option) => option.value));
+  if (state.trendBreakdownParent && !validParents.has(state.trendBreakdownParent)) {
+    state.trendBreakdownParent = "";
+    state.trendBreakdownValues.clear();
+  }
+
+  dom.trendBreakdownParent.disabled = !parentOptions.length;
+  dom.trendBreakdownParent.innerHTML = [
+    `<option value="">Aggregate only</option>`,
+    ...parentOptions.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.value)} (${formatCurrency(option.netSales)})</option>`)
+  ].join("");
+  dom.trendBreakdownParent.value = state.trendBreakdownParent || "";
+
+  const hasParent = Boolean(state.trendBreakdownParent);
+  if (dom.trendBreakdownParentTotal) {
+    dom.trendBreakdownParentTotal.disabled = !hasParent;
+    dom.trendBreakdownParentTotal.checked = Boolean(hasParent && state.trendShowBreakdownParent);
+  }
+
+  if (!hasParent) {
+    dom.trendBreakdownOptions.innerHTML = "";
+    if (dom.trendBreakdownSummary) dom.trendBreakdownSummary.textContent = "Aggregate only";
+    if (dom.trendBreakdownNote) dom.trendBreakdownNote.textContent = `Choose one ${dimension.label} to compare ${breakdown.label} lines inside it.`;
+    return;
+  }
+
+  const childOptions = getTrendBreakdownChildOptions(records);
+  const validChildren = new Set(childOptions.map((option) => option.value));
+  state.trendBreakdownValues = new Set(Array.from(state.trendBreakdownValues).filter((value) => validChildren.has(value)));
+  const selectedCount = state.trendBreakdownValues.size;
+  const isAtLimit = selectedCount >= TREND_BREAKDOWN_MAX_SELECTED;
+  const displayedOptions = childOptions.slice(0, TREND_BREAKDOWN_OPTION_LIMIT);
+  const hiddenCount = Math.max(0, childOptions.length - displayedOptions.length);
+
+  dom.trendBreakdownOptions.innerHTML = displayedOptions.length
+    ? displayedOptions.map((option) => {
+      const checked = state.trendBreakdownValues.has(option.value);
+      const disabled = !checked && isAtLimit;
+      return `
+        <label class="compare-region-option trend-breakdown-option ${disabled ? "is-disabled" : ""}" title="${escapeHtml(option.value)}">
+          <input type="checkbox" data-trend-breakdown-value="${escapeHtml(option.value)}" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""}>
+          <span>${escapeHtml(option.value)}</span>
+          <em>${formatCurrency(option.netSales)}</em>
+        </label>
+      `;
+    }).join("")
+    : `<div class="empty-state trend-breakdown-empty">No ${escapeHtml(breakdown.label)} values for the selected parent</div>`;
+
+  if (dom.trendBreakdownSummary) {
+    const totalPart = state.trendShowBreakdownParent ? "parent total" : "";
+    const childPart = selectedCount ? `${numberFormat.format(selectedCount)} ${breakdown.label}` : "";
+    const parts = [totalPart, childPart].filter(Boolean);
+    dom.trendBreakdownSummary.textContent = parts.length
+      ? `${state.trendBreakdownParent}: ${parts.join(" + ")}`
+      : `${state.trendBreakdownParent}: no lines`;
+  }
+
+  if (dom.trendBreakdownNote) {
+    const moreText = hiddenCount ? ` Showing top ${numberFormat.format(displayedOptions.length)} by sales.` : "";
+    dom.trendBreakdownNote.textContent = `Select up to ${TREND_BREAKDOWN_MAX_SELECTED} ${breakdown.label} lines within ${state.trendBreakdownParent}.${moreText}`;
+  }
+}
+
+function getTrendBreakdownParentOptions(records, parentKey) {
+  const map = aggregateTrendBreakdownOptions(records, parentKey);
+  return Array.from(map.values())
+    .filter((option) => !isHiddenResultValue(option.value))
+    .sort((a, b) => b.netSales - a.netSales || b.netUnits - a.netUnits || collator.compare(a.value, b.value));
+}
+
+function getTrendBreakdownChildOptions(records) {
+  const dimension = getActiveDimension();
+  const breakdown = getActiveBreakdownDimension();
+  const parent = state.trendBreakdownParent;
+  if (!breakdown || !parent) return [];
+  const parentRecords = records.filter((record) => (record[dimension.key] || BLANK) === parent);
+  return Array.from(aggregateTrendBreakdownOptions(parentRecords, breakdown.key).values())
+    .filter((option) => !isHiddenResultValue(option.value))
+    .sort((a, b) => b.netSales - a.netSales || b.netUnits - a.netUnits || collator.compare(a.value, b.value));
+}
+
+function aggregateTrendBreakdownOptions(records, key) {
+  const map = new Map();
+  for (const record of records) {
+    const value = record[key] || BLANK;
+    if (isHiddenResultValue(value)) continue;
+    if (!map.has(value)) {
+      map.set(value, {
+        value,
+        netSales: 0,
+        netUnits: 0
+      });
+    }
+    const option = map.get(value);
+    option.netSales += metricValue(record, "netSales");
+    option.netUnits += metricValue(record, "netUnits");
+  }
+  return map;
+}
+
+function buildTrendBreakdownSeries(currentRecords, compareRecords, axisRows, compareAxisRows) {
+  const dimension = getActiveDimension();
+  const breakdown = getActiveBreakdownDimension();
+  const parent = state.trendBreakdownParent;
+  if (!breakdown || !parent || !axisRows.length) return [];
+
+  const selectedChildren = Array.from(state.trendBreakdownValues || []);
+  const currentParentRecords = currentRecords.filter((record) => (record[dimension.key] || BLANK) === parent);
+  const compareParentRecords = compareRecords.filter((record) => (record[dimension.key] || BLANK) === parent);
+  const series = [];
+  let colorIndex = 0;
+
+  if (state.trendShowBreakdownParent) {
+    series.push({
+      value: parent,
+      color: "#f7f7f2",
+      legendLabel: `${truncateText(parent, 18)} total`,
+      legendTitle: `${parent} total`,
+      rows: buildTrendRows(currentParentRecords, state.trendGrain, axisRows[0]?.filterStart || axisRows[0]?.periodStart, axisRows.at(-1)?.filterEnd || axisRows.at(-1)?.periodEnd),
+      compareRows: compareAxisRows.length
+        ? buildTrendRows(compareParentRecords, state.trendGrain, compareAxisRows[0]?.filterStart || compareAxisRows[0]?.periodStart, compareAxisRows.at(-1)?.filterEnd || compareAxisRows.at(-1)?.periodEnd)
+        : []
+    });
+  }
+
+  selectedChildren.forEach((value) => {
+    const currentChildRecords = currentParentRecords.filter((record) => (record[breakdown.key] || BLANK) === value);
+    const compareChildRecords = compareParentRecords.filter((record) => (record[breakdown.key] || BLANK) === value);
+    if (!currentChildRecords.length && !compareChildRecords.length) return;
+
+    series.push({
+      value,
+      color: TREND_BREAKDOWN_COLORS[colorIndex % TREND_BREAKDOWN_COLORS.length],
+      legendLabel: truncateText(value, 22),
+      legendTitle: `${parent} / ${value}`,
+      rows: buildTrendRows(currentChildRecords, state.trendGrain, axisRows[0]?.filterStart || axisRows[0]?.periodStart, axisRows.at(-1)?.filterEnd || axisRows.at(-1)?.periodEnd),
+      compareRows: compareAxisRows.length
+        ? buildTrendRows(compareChildRecords, state.trendGrain, compareAxisRows[0]?.filterStart || compareAxisRows[0]?.periodStart, compareAxisRows.at(-1)?.filterEnd || compareAxisRows.at(-1)?.periodEnd)
+        : []
+    });
+    colorIndex += 1;
+  });
+
+  return normalizeTrendBreakdownSeriesSet(series, axisRows, compareAxisRows);
+}
+
+function normalizeTrendBreakdownSeriesSet(series, axisRows, compareAxisRows) {
+  return series.map((item) => ({
+    ...item,
+    rows: normalizeTrendRowsToAxis(item.rows || [], axisRows),
+    compareRows: compareAxisRows.length ? normalizeTrendRowsToAxis(item.compareRows || [], compareAxisRows) : []
+  }));
+}
+
+function normalizeTrendRowsToAxis(rows, axisRows) {
+  const rowMap = new Map(rows.map((row) => [row.periodStart, row]));
+  return axisRows.map((period) => rowMap.get(period.periodStart) || {
+    ...period,
+    netSales: 0,
+    netUnits: 0,
+    orders: 0,
+    salesChange: null,
+    unitsChange: null
+  });
+}
+
+function renderTrendBreakdownSeriesLines(item, options) {
+  const rows = item[options.rowsKey || "rows"] || [];
+  if (!rows.length) return "";
+  const compareClass = options.isCompare ? " compare-period-product-line" : "";
+  const salesPoints = rows.map((row, index) => ({
+    x: options.xForSeriesIndex(index, rows.length),
+    y: options.yForValue(row.netSales, options.salesScale)
+  }));
+  const unitsPoints = rows.map((row, index) => ({
+    x: options.xForSeriesIndex(index, rows.length),
+    y: options.yForValue(row.netUnits, options.unitsScale)
+  }));
+
+  return `
+    ${options.showSales ? `<path d="${buildTrendPath(salesPoints)}" class="compare-product-line compare-sales-line trend-breakdown-line${compareClass}" style="--compare-color:${item.color}"></path>` : ""}
+    ${options.showUnits ? `<path d="${buildTrendPath(unitsPoints)}" class="compare-product-line compare-units-line trend-breakdown-line${compareClass}" style="--compare-color:${item.color}"></path>` : ""}
+  `;
+}
+
+function renderTrendBreakdownSeriesPoints(item, options) {
+  const rows = item[options.rowsKey || "rows"] || [];
+  return rows.map((row, index) => {
+    const salesPoint = {
+      x: options.xForSeriesIndex(index, rows.length),
+      y: options.yForValue(row.netSales, options.salesScale)
+    };
+    const unitsPoint = {
+      x: options.xForSeriesIndex(index, rows.length),
+      y: options.yForValue(row.netUnits, options.unitsScale)
+    };
+    return renderTrendBreakdownPointGroup(item, row, salesPoint, unitsPoint, { ...options, trendIndex: index });
+  }).join("");
+}
+
+function renderTrendBreakdownPointGroup(item, row, salesPoint, unitsPoint, options) {
+  const visiblePoints = [
+    options.showSales ? salesPoint : null,
+    options.showUnits ? unitsPoint : null
+  ].filter(Boolean);
+  const anchorPoint = visiblePoints.reduce((top, point) => point.y < top.y ? point : top, visiblePoints[0]);
+  const tooltip = getProductCompareTooltipPosition(anchorPoint.x, anchorPoint.y, options);
+  const periodType = state.trendGrain === "week" ? "Week" : state.trendGrain === "month" ? "Month" : "Day";
+  const periodLabel = options.isCompare ? `Compare ${periodType}` : periodType;
+  const compareClass = options.isCompare ? " compare-period-point-group" : "";
+  const pointClass = options.isCompare ? " compare-period-product-point" : "";
+  const pointRadius = options.isCompare ? "5.3" : "4.5";
+  const label = `${item.legendTitle || item.legendLabel}, ${periodLabel} ${row.periodLabel}, sales ${formatCurrency(row.netSales)}, units ${formatNumber(row.netUnits)}`;
+  const drilldownStart = row.filterStart || row.periodStart;
+  const drilldownEnd = row.filterEnd || row.periodEnd || drilldownStart;
+  const trendIndexAttr = Number.isFinite(options.trendIndex) ? ` data-trend-index="${options.trendIndex}"` : "";
+  const hitTargets = visiblePoints.map((point) => (
+    `<circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="14" class="trend-point-hit"></circle>`
+  )).join("");
+
+  return `
+    <g class="trend-point-group compare-point-group trend-breakdown-point-group${compareClass}" tabindex="0" role="button" aria-label="${escapeHtml(`${label}. Click to filter dashboard to this period.`)}" data-period-start="${escapeHtml(drilldownStart)}" data-period-end="${escapeHtml(drilldownEnd)}" data-period-label="${escapeHtml(row.periodLabel)}" data-period-role="${options.isCompare ? "compare" : "current"}"${trendIndexAttr}>
+      ${hitTargets}
+      ${options.showSales ? `<circle cx="${salesPoint.x.toFixed(2)}" cy="${salesPoint.y.toFixed(2)}" r="${pointRadius}" class="trend-point-dot compare-point-dot${pointClass}" style="--compare-color:${item.color}"></circle>` : ""}
+      ${options.showUnits ? `<circle cx="${unitsPoint.x.toFixed(2)}" cy="${unitsPoint.y.toFixed(2)}" r="${pointRadius}" class="trend-point-dot compare-point-dot compare-point-units${pointClass}" style="--compare-color:${item.color}"></circle>` : ""}
+      <g class="trend-tooltip compare-tooltip${options.isCompare ? " compare-period-tooltip" : ""}" transform="translate(${tooltip.x.toFixed(2)} ${tooltip.y.toFixed(2)})">
+        <rect x="0" y="0" width="${tooltip.width}" height="${tooltip.height}" rx="4" class="trend-tooltip-card"></rect>
+        <rect x="0" y="0" width="4" height="${tooltip.height}" rx="2" class="trend-tooltip-accent" style="--compare-color:${item.color}"></rect>
+        <text x="14" y="20" class="trend-tooltip-label">Line</text>
+        <text x="82" y="20" class="trend-tooltip-value">${escapeHtml(truncateText(item.legendLabel, 24))}</text>
+        <text x="14" y="40" class="trend-tooltip-label">${escapeHtml(periodLabel)}</text>
+        <text x="82" y="40" class="trend-tooltip-value">${escapeHtml(row.periodLabel)}</text>
+        <text x="14" y="62" class="trend-tooltip-label">Sales</text>
+        <text x="82" y="62" class="trend-tooltip-value">${escapeHtml(formatCurrency(row.netSales))}</text>
+        <text x="14" y="82" class="trend-tooltip-label">Units</text>
+        <text x="82" y="82" class="trend-tooltip-value">${escapeHtml(formatNumber(row.netUnits))}</text>
+      </g>
+    </g>
   `;
 }
 
@@ -4710,6 +5053,7 @@ function formatPivotCellValue(row, key) {
   if (key === "parentSalesShare") return row.parentSalesShare === null ? "" : formatPercent(row.parentSalesShare);
   if (key === "parentUnitsShare") return row.parentUnitsShare === null ? "" : formatPercent(row.parentUnitsShare);
   if (key === "compareSales") return row.hasComparison ? formatCurrency(row.compareSales) : "";
+  if (key === "compareUnits") return row.hasComparison ? formatNumber(row.compareUnits) : "";
   if (key === "change") return row.hasComparison ? formatCurrency(row.change) : "";
   if (key === "unitChange") return row.hasComparison ? formatNumber(row.unitChange) : "";
   if (key === "unitChangePct") return row.hasComparison ? (row.unitChangePct === null ? "n/a" : formatPercent(row.unitChangePct)) : "";
@@ -5968,6 +6312,7 @@ function getPivotExportValue(row, key) {
   if (key === "parentSalesShare") return row.parentSalesShare === null ? "" : row.parentSalesShare;
   if (key === "parentUnitsShare") return row.parentUnitsShare === null ? "" : row.parentUnitsShare;
   if (key === "compareSales") return row.hasComparison ? row.compareSales : "";
+  if (key === "compareUnits") return row.hasComparison ? row.compareUnits : "";
   if (key === "change") return row.hasComparison ? row.change : "";
   if (key === "unitChange") return row.hasComparison ? row.unitChange : "";
   if (key === "unitChangePct") return row.hasComparison ? (row.unitChangePct === null ? "n/a" : row.unitChangePct) : "";

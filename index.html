@@ -84,6 +84,7 @@
                 <option value="parentUnitsShare">% Parent Units</option>
                 <option value="change">Sales Change</option>
                 <option value="changePct">Change %</option>
+                <option value="compareUnits">Compare Units</option>
                 <option value="unitChange">Units Change</option>
                 <option value="unitChangePct">Unit Change %</option>
                 <option value="status">Status</option>
@@ -191,6 +192,24 @@
                   <button class="button compact panel-toggle" type="button" data-collapse-target="trend-chart" aria-expanded="true">Collapse</button>
                 </div>
               </div>
+              <details id="trend-breakdown-filter" class="compare-region-filter trend-breakdown-filter">
+                <summary>
+                  <span>Breakdown Lines</span>
+                  <em id="trend-breakdown-summary">Aggregate only</em>
+                </summary>
+                <div class="trend-breakdown-body">
+                  <label class="trend-breakdown-parent-control">
+                    <span>Parent</span>
+                    <select id="trend-breakdown-parent"></select>
+                  </label>
+                  <label class="compare-region-option all-region-option trend-parent-total-option">
+                    <input id="trend-breakdown-parent-total" type="checkbox" checked>
+                    <span>Selected Parent Total</span>
+                  </label>
+                  <div id="trend-breakdown-options" class="compare-region-options trend-breakdown-options"></div>
+                  <p id="trend-breakdown-note" class="trend-breakdown-note"></p>
+                </div>
+              </details>
               <div id="trend-chart" class="trend-chart" role="img" aria-label="Net sales trend line chart"></div>
             </section>
 
