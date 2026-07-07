@@ -247,6 +247,7 @@ const state = {
   trendProductQuery: "",
   trendGrain: "week",
   trendMetric: "sales",
+  trendShowAggregate: true,
   trendShowCompare: true,
   trendBreakdownParent: "",
   trendBreakdownValues: new Set(),
@@ -352,6 +353,7 @@ function collectDom() {
     trendHeading: document.querySelector("#trend-heading"),
     trendGrain: document.querySelector("#trend-grain"),
     trendMetric: document.querySelector("#trend-metric"),
+    trendAggregateToggle: document.querySelector("#trend-aggregate-toggle"),
     trendCompareToggle: document.querySelector("#trend-compare-toggle"),
     trendProductInput: document.querySelector("#trend-product-input"),
     trendProductOptions: document.querySelector("#trend-product-options"),
@@ -445,6 +447,7 @@ function bindEvents() {
   dom.collapseFilters?.addEventListener("click", () => setAllFilterGroupsOpen(false));
   dom.trendGrain.addEventListener("change", handleTrendGrainChange);
   dom.trendMetric.addEventListener("change", handleTrendMetricChange);
+  dom.trendAggregateToggle?.addEventListener("change", handleTrendAggregateToggleChange);
   dom.trendCompareToggle?.addEventListener("change", handleTrendCompareToggleChange);
   dom.trendProductInput.addEventListener("input", handleTrendProductInput);
   dom.clearTrendProduct.addEventListener("click", clearTrendProduct);
@@ -2881,6 +2884,11 @@ function handleTrendMetricChange() {
   renderTrendTable(getCurrentTrendRecords());
 }
 
+function handleTrendAggregateToggleChange() {
+  state.trendShowAggregate = Boolean(dom.trendAggregateToggle?.checked);
+  renderTrendTable(getCurrentTrendRecords());
+}
+
 function handleTrendCompareToggleChange() {
   state.trendShowCompare = Boolean(dom.trendCompareToggle?.checked);
   renderTrendTable(getCurrentTrendRecords());
@@ -3048,6 +3056,7 @@ function renderTrendTable(filteredRecords) {
     ? buildTrendRows(compareTrendRecords, state.trendGrain, comparisonBasis.sourceStart, comparisonBasis.sourceEnd)
     : [];
   const breakdownSeries = buildTrendBreakdownSeries(trendRecords, compareTrendRecords, rows, compareRows);
+  syncTrendAggregateToggle(hasVisibleTrendBreakdownSeries(breakdownSeries));
   const grainLabel = getTrendGrainLabel(state.trendGrain);
   dom.trendHeading.textContent = state.trendProductQuery ? `${grainLabel} Trend by Product` : `${grainLabel} Trend`;
 
@@ -3065,6 +3074,9 @@ function renderTrendLineChart(rows, compareRows = [], breakdownSeries = []) {
   const showUnits = metricMode !== "sales";
   const showBoth = showSales && showUnits;
   const showCompare = shouldShowTrendCompareLine() && compareRows.length > 0;
+  const hasBreakdownLines = hasVisibleTrendBreakdownSeries(breakdownSeries);
+  const showAggregate = Boolean(state.trendShowAggregate || !hasBreakdownLines);
+  const showAggregateCompare = showAggregate && showCompare;
   const width = 860;
   const height = 360;
   const pad = { top: 30, right: showBoth ? 92 : 46, bottom: 86, left: 88 };
@@ -3073,12 +3085,18 @@ function renderTrendLineChart(rows, compareRows = [], breakdownSeries = []) {
   const compareRowsForAxis = showCompare ? compareRows : [];
   const axisRows = compareRowsForAxis.length > rows.length ? compareRowsForAxis : rows;
   const axisLength = Math.max(axisRows.length, 1);
+  const aggregateSalesValues = showAggregate
+    ? rows.map((row) => row.netSales).concat(compareRowsForAxis.map((row) => row.netSales))
+    : [];
+  const aggregateUnitsValues = showAggregate
+    ? rows.map((row) => row.netUnits).concat(compareRowsForAxis.map((row) => row.netUnits))
+    : [];
   const breakdownSalesValues = breakdownSeries.flatMap((item) => item.rows.map((row) => row.netSales)
     .concat(showCompare ? (item.compareRows || []).map((row) => row.netSales) : []));
   const breakdownUnitsValues = breakdownSeries.flatMap((item) => item.rows.map((row) => row.netUnits)
     .concat(showCompare ? (item.compareRows || []).map((row) => row.netUnits) : []));
-  const salesScale = getTrendScale(rows.map((row) => row.netSales).concat(compareRowsForAxis.map((row) => row.netSales), breakdownSalesValues));
-  const unitsScale = getTrendScale(rows.map((row) => row.netUnits).concat(compareRowsForAxis.map((row) => row.netUnits), breakdownUnitsValues));
+  const salesScale = getTrendScale(aggregateSalesValues.concat(breakdownSalesValues));
+  const unitsScale = getTrendScale(aggregateUnitsValues.concat(breakdownUnitsValues));
   const primaryScale = showSales ? salesScale : unitsScale;
   const xForAxisIndex = (index) => {
     if (axisLength <= 1) return pad.left + plotWidth / 2;
@@ -3150,8 +3168,8 @@ function renderTrendLineChart(rows, compareRows = [], breakdownSeries = []) {
       <div class="trend-chart-head">
         <h3 class="trend-chart-title">Net Sales & Units Over Time</h3>
         <div class="trend-legend" aria-hidden="true">
-          ${showSales ? `<span><i class="legend-swatch sales"></i>Sales $</span>` : ""}
-          ${showUnits ? `<span><i class="legend-swatch units"></i>Units</span>` : ""}
+          ${showAggregate && showSales ? `<span><i class="legend-swatch sales"></i>Aggregate Sales $</span>` : ""}
+          ${showAggregate && showUnits ? `<span><i class="legend-swatch units"></i>Aggregate Units</span>` : ""}
           ${breakdownSeries.map((item) => `
             <span title="${escapeHtml(item.legendTitle || item.legendLabel)}">
               <i class="legend-swatch breakdown-swatch" style="--compare-color:${item.color}"></i>${escapeHtml(item.legendLabel)}
@@ -3175,21 +3193,21 @@ function renderTrendLineChart(rows, compareRows = [], breakdownSeries = []) {
         return `<text x="${width - pad.right + 14}" y="${(y + 4).toFixed(2)}" class="trend-axis-label units-axis" text-anchor="start">${escapeHtml(formatNumber(tick))}</text>`;
       }).join("")}
       <line x1="${pad.left}" y1="${baselineY.toFixed(2)}" x2="${width - pad.right}" y2="${baselineY.toFixed(2)}" class="trend-zero-line"></line>
-      ${showSales ? `<path d="${salesAreaPath}" class="trend-area sales-area"></path>` : ""}
-      ${showUnits && !showSales ? `<path d="${unitsAreaPath}" class="trend-area units-area"></path>` : ""}
-      ${showCompare && showSales ? `<path d="${compareSalesLinePath}" class="trend-line sales-line compare-period-line"></path>` : ""}
-      ${showCompare && showUnits ? `<path d="${compareUnitsLinePath}" class="trend-line units-line compare-period-line compare-period-units-line"></path>` : ""}
+      ${showAggregate && showSales ? `<path d="${salesAreaPath}" class="trend-area sales-area"></path>` : ""}
+      ${showAggregate && showUnits && !showSales ? `<path d="${unitsAreaPath}" class="trend-area units-area"></path>` : ""}
+      ${showAggregateCompare && showSales ? `<path d="${compareSalesLinePath}" class="trend-line sales-line compare-period-line"></path>` : ""}
+      ${showAggregateCompare && showUnits ? `<path d="${compareUnitsLinePath}" class="trend-line units-line compare-period-line compare-period-units-line"></path>` : ""}
       ${showCompare ? breakdownSeries.map((item) => renderTrendBreakdownSeriesLines(item, { showSales, showUnits, xForSeriesIndex, yForValue, salesScale, unitsScale, rowsKey: "compareRows", isCompare: true })).join("") : ""}
       ${breakdownSeries.map((item) => renderTrendBreakdownSeriesLines(item, { showSales, showUnits, xForSeriesIndex, yForValue, salesScale, unitsScale })).join("")}
-      ${showSales ? `<path d="${salesLinePath}" class="trend-line sales-line"></path>` : ""}
-      ${showUnits ? `<path d="${unitsLinePath}" class="trend-line units-line"></path>` : ""}
+      ${showAggregate && showSales ? `<path d="${salesLinePath}" class="trend-line sales-line"></path>` : ""}
+      ${showAggregate && showUnits ? `<path d="${unitsLinePath}" class="trend-line units-line"></path>` : ""}
       ${xLabelIndexes.map((index) => {
         const row = axisRows[index];
         const x = xForAxisIndex(index);
         const y = height - 32;
         return `<text x="${x.toFixed(2)}" y="${y}" class="trend-axis-label trend-x-label" text-anchor="end" transform="rotate(-35 ${x.toFixed(2)} ${y})">${escapeHtml(row.axisLabel || row.periodLabel)}</text>`;
       }).join("")}
-      ${showCompare ? compareRowsForAxis.map((row, index) => renderTrendPointGroup(row, compareSalesPoints[index], compareUnitsPoints[index], {
+      ${showAggregateCompare ? compareRowsForAxis.map((row, index) => renderTrendPointGroup(row, compareSalesPoints[index], compareUnitsPoints[index], {
         showSales,
         showUnits,
         width,
@@ -3200,17 +3218,28 @@ function renderTrendLineChart(rows, compareRows = [], breakdownSeries = []) {
       })).join("") : ""}
       ${showCompare ? breakdownSeries.map((item) => renderTrendBreakdownSeriesPoints(item, { showSales, showUnits, xForSeriesIndex, yForValue, salesScale, unitsScale, width, height, pad, rowsKey: "compareRows", isCompare: true })).join("") : ""}
       ${breakdownSeries.map((item) => renderTrendBreakdownSeriesPoints(item, { showSales, showUnits, xForSeriesIndex, yForValue, salesScale, unitsScale, width, height, pad })).join("")}
-      ${rows.map((row, index) => renderTrendPointGroup(row, salesPoints[index], unitsPoints[index], {
+      ${showAggregate ? rows.map((row, index) => renderTrendPointGroup(row, salesPoints[index], unitsPoints[index], {
         showSales,
         showUnits,
         width,
         height,
         pad,
         trendIndex: index
-      })).join("")}
+      })).join("") : ""}
       </svg>
     </div>
   `;
+}
+
+function hasVisibleTrendBreakdownSeries(series = []) {
+  return series.some((item) => (item.rows || []).length || (item.compareRows || []).length);
+}
+
+function syncTrendAggregateToggle(hasBreakdownLines) {
+  if (!dom.trendAggregateToggle) return;
+  dom.trendAggregateToggle.disabled = !hasBreakdownLines;
+  dom.trendAggregateToggle.checked = hasBreakdownLines ? Boolean(state.trendShowAggregate) : true;
+  dom.trendAggregateToggle.closest("label")?.classList.toggle("is-disabled", !hasBreakdownLines);
 }
 
 function renderTrendBreakdownControls(records) {
