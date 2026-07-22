@@ -4975,6 +4975,7 @@ function renderPivotTable(rows) {
   const limit = getRowLimit();
   const visibleRows = Number.isFinite(limit) ? rows.slice(0, limit) : rows;
   const columns = getTableColumns("pivot");
+  const underlayColumnKey = columns.find((column) => column.numeric)?.key || "";
   const hiddenCount = getPivotNameRows().filter((row) => getActivePivotNameExclusions().has(getPivotNameKey(row))).length;
   const maxAbsNetSales = getMaxAbsValue(visibleRows, "netSales");
   const headingBase = breakdown
@@ -4994,9 +4995,9 @@ function renderPivotTable(rows) {
 
   dom.pivotTbody.innerHTML = visibleRows.map((row) => `
     <tr class="${getPivotRowClass(row)}">
-      ${columns.map((column, index) => renderPivotCell(row, column, {
+      ${columns.map((column) => renderPivotCell(row, column, {
         maxAbsNetSales,
-        showUnderlay: index === 0
+        showUnderlay: column.key === underlayColumnKey
       })).join("")}
     </tr>
   `).join("");
