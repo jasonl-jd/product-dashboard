@@ -4994,7 +4994,10 @@ function renderPivotTable(rows) {
 
   dom.pivotTbody.innerHTML = visibleRows.map((row) => `
     <tr class="${getPivotRowClass(row)}">
-      ${columns.map((column) => renderPivotCell(row, column, { maxAbsNetSales })).join("")}
+      ${columns.map((column, index) => renderPivotCell(row, column, {
+        maxAbsNetSales,
+        showUnderlay: index === 0
+      })).join("")}
     </tr>
   `).join("");
 }
@@ -5016,41 +5019,47 @@ function renderTableHeader(table, column) {
 }
 
 function renderPivotCell(row, column, options = {}) {
+  let content = "";
+
   if (column.key === "value") {
-    return renderPivotValueCell(row, column);
-  }
-
-  if (column.key === "status") {
+    content = renderPivotValueContent(row);
+  } else if (column.key === "status") {
     const value = row[column.key] || "";
-    return renderTextCell(value, column);
+    content = renderClip(value);
+  } else {
+    content = formatPivotCellValue(row, column.key);
   }
 
-  if (column.key === "netSales") {
-    return renderPivotSalesCell(row, column, options);
+  if (options.showUnderlay) {
+    return renderPivotUnderlayCell(row, column, content, options);
   }
 
-  const value = formatPivotCellValue(row, column.key);
-  return `<td class="${tableCellClass(column, getDeltaClass(row, column.key))}">${value}</td>`;
+  const valueClass = column.key === "value"
+    ? (Number(row.level) > 0 ? "pivot-value-cell is-child" : "pivot-value-cell")
+    : getDeltaClass(row, column.key);
+  return `<td class="${tableCellClass(column, valueClass)}">${content}</td>`;
 }
 
-function renderPivotValueCell(row, column) {
+function renderPivotValueContent(row) {
   const label = row.displayValue || row.value || "";
   const tooltip = row.filterLabel || label;
   const isChild = Number(row.level) > 0;
   const className = isChild ? "clip pivot-value-label is-child" : "clip pivot-value-label";
-  const cellClass = tableCellClass(column, isChild ? "pivot-value-cell is-child" : "pivot-value-cell");
-  return `<td class="${cellClass}">${renderClip(label, tooltip, className)}</td>`;
+  return renderClip(label, tooltip, className);
 }
 
-function renderPivotSalesCell(row, column, options) {
+function renderPivotUnderlayCell(row, column, content, options) {
   const value = Number(row.netSales) || 0;
   const max = Number(options.maxAbsNetSales) || 1;
   const width = Math.max(value === 0 ? 0 : 2, Math.min(100, Math.abs(value) / max * 100));
   const directionClass = value < 0 ? "negative" : "positive";
+  const valueClass = column.key === "value"
+    ? (Number(row.level) > 0 ? "pivot-value-cell is-child" : "pivot-value-cell")
+    : getDeltaClass(row, column.key);
   return `
-    <td class="${tableCellClass(column, `pivot-bar-cell ${directionClass}`)}" style="--pivot-bar-width:${width.toFixed(2)}%">
+    <td class="${tableCellClass(column, `pivot-bar-cell ${directionClass} ${valueClass}`)}" style="--pivot-bar-width:${width.toFixed(2)}%">
       <span class="pivot-cell-bar" aria-hidden="true"></span>
-      <span class="pivot-cell-value">${formatCurrency(value)}</span>
+      <div class="pivot-cell-value">${content}</div>
     </td>
   `;
 }
