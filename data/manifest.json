@@ -127,6 +127,14 @@
     {
       "path": "data/11051-JDSF---Weekly-Style-Sales-wk 26 2026.csv",
       "name": "2026 Week 26"
+    },
+    {
+      "path": "data/11051-JDSF---Weekly-Style-Sales-wk 27 2026.csv",
+      "name": "2026 Week 27"
+    },
+    {
+      "path": "data/11051-JDSF---Weekly-Style-Sales-wk 27 2025.csv",
+      "name": "2025 Week 27"
     }
   ]
 }
