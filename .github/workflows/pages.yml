@@ -29,12 +29,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
+          package-manager-cache: false
 
       - name: Build compiled data
         run: node tools/build-compiled-data.js
@@ -43,9 +44,10 @@ jobs:
         run: node tools/prepare-pages-artifact.js
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: .pages-dist
+          include-hidden-files: true
 
   deploy:
     needs: build
