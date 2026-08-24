@@ -3074,15 +3074,17 @@ function renderTrendLineChart(rows, compareRows = [], breakdownSeries = []) {
   const showUnits = metricMode !== "sales";
   const showBoth = showSales && showUnits;
   const showCompare = shouldShowTrendCompareLine() && compareRows.length > 0;
+  const comparisonBasis = getComparisonBasis(getAppliedPeriods());
   const hasBreakdownLines = hasVisibleTrendBreakdownSeries(breakdownSeries);
   const showAggregate = Boolean(state.trendShowAggregate || !hasBreakdownLines);
   const showAggregateCompare = showAggregate && showCompare;
   const width = 860;
-  const height = 360;
-  const pad = { top: 30, right: showBoth ? 92 : 46, bottom: 86, left: 88 };
+  const compareRowsForAxis = showCompare ? compareRows : [];
+  const showDualXAxis = showCompare && !trendAxisRowsMatch(rows, compareRowsForAxis);
+  const height = showDualXAxis ? 400 : 360;
+  const pad = { top: showDualXAxis ? 70 : 30, right: showBoth ? 92 : 46, bottom: 86, left: 88 };
   const plotWidth = width - pad.left - pad.right;
   const plotHeight = height - pad.top - pad.bottom;
-  const compareRowsForAxis = showCompare ? compareRows : [];
   const axisRows = compareRowsForAxis.length > rows.length ? compareRowsForAxis : rows;
   const axisLength = Math.max(axisRows.length, 1);
   const aggregateSalesValues = showAggregate
@@ -3098,10 +3100,6 @@ function renderTrendLineChart(rows, compareRows = [], breakdownSeries = []) {
   const salesScale = getTrendScale(aggregateSalesValues.concat(breakdownSalesValues));
   const unitsScale = getTrendScale(aggregateUnitsValues.concat(breakdownUnitsValues));
   const primaryScale = showSales ? salesScale : unitsScale;
-  const xForAxisIndex = (index) => {
-    if (axisLength <= 1) return pad.left + plotWidth / 2;
-    return pad.left + (index / (axisLength - 1)) * plotWidth;
-  };
   const xForSeriesIndex = (index, seriesLength) => {
     if (seriesLength <= 1) {
       return axisLength > 1 ? pad.left + plotWidth : pad.left + plotWidth / 2;
@@ -3143,7 +3141,12 @@ function renderTrendLineChart(rows, compareRows = [], breakdownSeries = []) {
   const latest = rows[rows.length - 1];
   const latestChange = latest.salesChange === null ? "" : `${latest.salesChange >= 0 ? "+" : ""}${formatCurrency(latest.salesChange)}`;
   const primaryTickFormatter = showSales ? formatCompactCurrency : formatNumber;
-  const xLabelIndexes = getTrendXLabelIndexes(axisRows, state.trendGrain, plotWidth);
+  const currentXLabelIndexes = showDualXAxis ? getTrendXLabelIndexes(rows, state.trendGrain, plotWidth) : [];
+  const bottomAxisRows = showDualXAxis ? compareRowsForAxis : rows;
+  const bottomXLabelIndexes = getTrendXLabelIndexes(bottomAxisRows, state.trendGrain, plotWidth);
+  const chartAriaLabel = showDualXAxis
+    ? `Trend line. Top axis shows current period dates; bottom axis shows ${comparisonBasis.label} comparison dates.`
+    : "Trend line";
 
   return `
     <div class="trend-summary">
@@ -3175,10 +3178,10 @@ function renderTrendLineChart(rows, compareRows = [], breakdownSeries = []) {
               <i class="legend-swatch breakdown-swatch" style="--compare-color:${item.color}"></i>${escapeHtml(item.legendLabel)}
             </span>
           `).join("")}
-          ${showCompare ? `<span><i class="legend-swatch compare-period"></i>Compare Period</span>` : ""}
+          ${showCompare ? `<span><i class="legend-swatch compare-period"></i>Compare: ${escapeHtml(comparisonBasis.label)}</span>` : ""}
         </div>
       </div>
-      <svg class="trend-line-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Trend line" data-trend-selectable="true" data-plot-left="${pad.left}" data-plot-right="${width - pad.right}" data-plot-top="${pad.top}" data-plot-bottom="${height - pad.bottom}" data-trend-point-count="${rows.length}">
+      <svg class="trend-line-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(chartAriaLabel)}" data-trend-selectable="true" data-plot-left="${pad.left}" data-plot-right="${width - pad.right}" data-plot-top="${pad.top}" data-plot-bottom="${height - pad.bottom}" data-trend-point-count="${rows.length}">
       <rect x="0" y="0" width="${width}" height="${height}" class="trend-svg-bg"></rect>
       <rect x="${pad.left}" y="${pad.top}" width="0" height="${plotHeight}" class="trend-range-selection" hidden></rect>
       ${primaryTicks.map((tick) => {
@@ -3192,6 +3195,16 @@ function renderTrendLineChart(rows, compareRows = [], breakdownSeries = []) {
         const y = yForValue(tick, unitsScale);
         return `<text x="${width - pad.right + 14}" y="${(y + 4).toFixed(2)}" class="trend-axis-label units-axis" text-anchor="start">${escapeHtml(formatNumber(tick))}</text>`;
       }).join("")}
+      ${showDualXAxis ? `
+        <line x1="${pad.left}" y1="${pad.top}" x2="${width - pad.right}" y2="${pad.top}" class="trend-x-axis-line current-axis-line"></line>
+        <text x="${pad.left - 12}" y="${pad.top - 15}" class="trend-axis-label trend-x-axis-title current-axis-title" text-anchor="end">CURRENT</text>
+        ${renderTrendXAxisLabels(rows, currentXLabelIndexes, xForSeriesIndex, pad.top - 15, {
+          position: "top",
+          plotLeft: pad.left,
+          plotRight: width - pad.right
+        })}
+      ` : ""}
+      <line x1="${pad.left}" y1="${height - pad.bottom}" x2="${width - pad.right}" y2="${height - pad.bottom}" class="trend-x-axis-line ${showDualXAxis ? "compare-axis-line" : "current-axis-line"}"></line>
       <line x1="${pad.left}" y1="${baselineY.toFixed(2)}" x2="${width - pad.right}" y2="${baselineY.toFixed(2)}" class="trend-zero-line"></line>
       ${showAggregate && showSales ? `<path d="${salesAreaPath}" class="trend-area sales-area"></path>` : ""}
       ${showAggregate && showUnits && !showSales ? `<path d="${unitsAreaPath}" class="trend-area units-area"></path>` : ""}
@@ -3201,12 +3214,13 @@ function renderTrendLineChart(rows, compareRows = [], breakdownSeries = []) {
       ${breakdownSeries.map((item) => renderTrendBreakdownSeriesLines(item, { showSales, showUnits, xForSeriesIndex, yForValue, salesScale, unitsScale })).join("")}
       ${showAggregate && showSales ? `<path d="${salesLinePath}" class="trend-line sales-line"></path>` : ""}
       ${showAggregate && showUnits ? `<path d="${unitsLinePath}" class="trend-line units-line"></path>` : ""}
-      ${xLabelIndexes.map((index) => {
-        const row = axisRows[index];
-        const x = xForAxisIndex(index);
-        const y = height - 32;
-        return `<text x="${x.toFixed(2)}" y="${y}" class="trend-axis-label trend-x-label" text-anchor="end" transform="rotate(-35 ${x.toFixed(2)} ${y})">${escapeHtml(row.axisLabel || row.periodLabel)}</text>`;
-      }).join("")}
+      ${showDualXAxis ? `<text x="${pad.left - 12}" y="${height - 32}" class="trend-axis-label trend-x-axis-title compare-axis-title" text-anchor="end">COMPARE</text>` : ""}
+      ${renderTrendXAxisLabels(bottomAxisRows, bottomXLabelIndexes, xForSeriesIndex, height - 32, {
+        position: "bottom",
+        plotLeft: pad.left,
+        plotRight: width - pad.right,
+        compare: showDualXAxis
+      })}
       ${showAggregateCompare ? compareRowsForAxis.map((row, index) => renderTrendPointGroup(row, compareSalesPoints[index], compareUnitsPoints[index], {
         showSales,
         showUnits,
@@ -3229,6 +3243,34 @@ function renderTrendLineChart(rows, compareRows = [], breakdownSeries = []) {
       </svg>
     </div>
   `;
+}
+
+function trendAxisRowsMatch(currentRows, compareRows) {
+  if (!Array.isArray(currentRows) || !Array.isArray(compareRows) || currentRows.length !== compareRows.length) return false;
+  return currentRows.every((row, index) => {
+    const compareRow = compareRows[index];
+    return row.periodStart === compareRow?.periodStart
+      && row.periodEnd === compareRow?.periodEnd
+      && row.filterStart === compareRow?.filterStart
+      && row.filterEnd === compareRow?.filterEnd;
+  });
+}
+
+function renderTrendXAxisLabels(axisRows, indexes, xForSeriesIndex, y, options = {}) {
+  if (!axisRows.length || !indexes.length) return "";
+  const isTop = options.position === "top";
+  const labelClass = options.compare ? " compare-axis-label" : isTop ? " current-axis-label" : "";
+
+  return indexes.map((index) => {
+    const row = axisRows[index];
+    const x = xForSeriesIndex(index, axisRows.length);
+    const nearLeft = Math.abs(x - Number(options.plotLeft)) < 1;
+    const nearRight = Math.abs(x - Number(options.plotRight)) < 1;
+    const anchor = nearLeft ? "start" : nearRight ? "end" : "middle";
+    const label = axisRows.length === 1 ? row.periodLabel : (row.axisLabel || row.periodLabel);
+    const transform = isTop ? "" : ` transform="rotate(-35 ${x.toFixed(2)} ${y})"`;
+    return `<text x="${x.toFixed(2)}" y="${y}" class="trend-axis-label trend-x-label${isTop ? " trend-x-label-top" : ""}${labelClass}" text-anchor="${anchor}"${transform}>${escapeHtml(label)}</text>`;
+  }).join("");
 }
 
 function hasVisibleTrendBreakdownSeries(series = []) {

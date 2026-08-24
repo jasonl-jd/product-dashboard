@@ -1686,6 +1686,40 @@ th.numeric {
   font-weight: 820;
 }
 
+.trend-x-label-top {
+  fill: #f2f2ee;
+  font-size: 10px;
+}
+
+.trend-x-axis-line {
+  stroke: rgba(255, 255, 255, 0.16);
+  stroke-width: 1;
+}
+
+.trend-x-axis-line.current-axis-line {
+  stroke: rgba(255, 221, 0, 0.42);
+}
+
+.trend-x-axis-line.compare-axis-line {
+  stroke-dasharray: 4 5;
+}
+
+.trend-x-axis-title {
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.current-axis-title,
+.current-axis-label {
+  fill: #ffdd00;
+}
+
+.compare-axis-title,
+.compare-axis-label {
+  fill: #a7a7a3;
+}
+
 .units-axis {
   fill: #9bd2ff;
 }
