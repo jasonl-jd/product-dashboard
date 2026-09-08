@@ -251,6 +251,7 @@ const state = {
   trendShowCompare: true,
   trendBreakdownParent: "",
   trendBreakdownValues: new Set(),
+  trendBreakdownColors: new Map(),
   trendShowBreakdownParent: true,
   trendSelection: {
     active: false,
@@ -3418,7 +3419,6 @@ function buildTrendBreakdownSeries(currentRecords, compareRecords, axisRows, com
   const currentParentRecords = currentRecords.filter((record) => (record[dimension.key] || BLANK) === parent);
   const compareParentRecords = compareRecords.filter((record) => (record[dimension.key] || BLANK) === parent);
   const series = [];
-  let colorIndex = 0;
 
   if (state.trendShowBreakdownParent) {
     series.push({
@@ -3440,7 +3440,7 @@ function buildTrendBreakdownSeries(currentRecords, compareRecords, axisRows, com
 
     series.push({
       value,
-      color: TREND_BREAKDOWN_COLORS[colorIndex % TREND_BREAKDOWN_COLORS.length],
+      color: getTrendBreakdownColor(breakdown.key, value),
       legendLabel: truncateText(value, 22),
       legendTitle: `${parent} / ${value}`,
       rows: buildTrendRows(currentChildRecords, state.trendGrain, axisRows[0]?.filterStart || axisRows[0]?.periodStart, axisRows.at(-1)?.filterEnd || axisRows.at(-1)?.periodEnd),
@@ -3448,10 +3448,24 @@ function buildTrendBreakdownSeries(currentRecords, compareRecords, axisRows, com
         ? buildTrendRows(compareChildRecords, state.trendGrain, compareAxisRows[0]?.filterStart || compareAxisRows[0]?.periodStart, compareAxisRows.at(-1)?.filterEnd || compareAxisRows.at(-1)?.periodEnd)
         : []
     });
-    colorIndex += 1;
   });
 
   return normalizeTrendBreakdownSeriesSet(series, axisRows, compareAxisRows);
+}
+
+function getTrendBreakdownColor(breakdownKey, value) {
+  const scope = cleanText(breakdownKey) || "breakdown";
+  const colorKey = cleanText(value) || BLANK;
+  if (!state.trendBreakdownColors.has(scope)) {
+    state.trendBreakdownColors.set(scope, new Map());
+  }
+
+  const colors = state.trendBreakdownColors.get(scope);
+  if (!colors.has(colorKey)) {
+    const color = TREND_BREAKDOWN_COLORS[colors.size % TREND_BREAKDOWN_COLORS.length];
+    colors.set(colorKey, color);
+  }
+  return colors.get(colorKey);
 }
 
 function normalizeTrendBreakdownSeriesSet(series, axisRows, compareAxisRows) {
