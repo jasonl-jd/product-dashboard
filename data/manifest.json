@@ -191,6 +191,14 @@
     {
       "path": "data/11051-JDSF---Weekly-Style-Sales-wk 35 2025.csv",
       "name": "2025 Week 35"
+    },
+    {
+      "path": "data/11051-JDSF---Weekly-Style-Sales-wk 31 2025.csv",
+      "name": "2025 Week 31"
+    },
+    {
+      "path": "data/11051-JDSF---Weekly-Style-Sales-wk 31 2026.csv",
+      "name": "2026 Week 31"
     }
   ]
 }
