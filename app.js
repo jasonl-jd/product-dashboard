@@ -1418,7 +1418,7 @@ async function refreshRepositoryData({ preserveDates, forceRefresh } = { preserv
     } else {
       const excludedRows = state.records.length - getAnalysisRecords().length;
       const excludedText = excludedRows
-        ? ` ${numberFormat.format(excludedRows)} refund adjustment row${excludedRows === 1 ? "" : "s"} excluded from analysis.`
+        ? ` ${numberFormat.format(excludedRows)} refund adjustment or zero-value shipping row${excludedRows === 1 ? "" : "s"} excluded from analysis.`
         : "";
       setStatus(`Ready. Loaded ${numberFormat.format(state.records.length)} shared rows from ${numberFormat.format(state.files.length)} repository file${state.files.length === 1 ? "" : "s"}.${excludedText}`);
     }
@@ -6086,7 +6086,8 @@ function getAnalysisRecords() {
 
 function isExcludedAnalysisRecord(record) {
   const title = normalizeExcludedProductTitle(record?.productTitle);
-  return EXCLUDED_ANALYSIS_PRODUCT_TITLES.has(title);
+  return EXCLUDED_ANALYSIS_PRODUCT_TITLES.has(title)
+    || (title === "shipping" && Number(record?.netSales) === 0 && Number(record?.netUnits) === 0);
 }
 
 function normalizeExcludedProductTitle(value) {
