@@ -9,6 +9,9 @@ on:
     paths:
       - ".github/workflows/pages.yml"
       - "app.js"
+      - "performance-core.js"
+      - "filter-count-worker.js"
+      - "markdown*.js"
       - "index.html"
       - "styles.css"
       - "data/**"
@@ -29,25 +32,32 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
-          node-version: 24
-          package-manager-cache: false
+          node-version: 20
 
       - name: Build compiled data
         run: node tools/build-compiled-data.js
+
+      - name: Bundle Excel workbook reader
+        run: node tools/fetch-workbook-reader.js
+
+      - name: Verify markdown calculations
+        run: node --test tools/test-markdown.js
+
+      - name: Verify dashboard calculations and performance helpers
+        run: node --test tools/test-analysis-filter.js tools/test-performance.js
 
       - name: Prepare lean Pages artifact
         run: node tools/prepare-pages-artifact.js
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-pages-artifact@v3
         with:
           path: .pages-dist
-          include-hidden-files: true
 
   deploy:
     needs: build
