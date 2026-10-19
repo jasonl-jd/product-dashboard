@@ -204,7 +204,8 @@ const state = {
     performance: true,
     trade: true,
     compare: true,
-    regional: true
+    regional: true,
+    markdown: true
   },
   renderContext: null,
   filters: Object.fromEntries(DIMENSIONS.map((dimension) => [dimension.key, new Set()])),
@@ -289,6 +290,73 @@ const state = {
 };
 
 const dom = {};
+let performanceCache = null;
+let renderedFiles = null;
+let productContext = null;
+let productPage = 0;
+const PRODUCT_PAGE_SIZE = 100;
+
+function filterSignature() {
+  return JSON.stringify(DIMENSIONS.map(({ key }) => [
+    [...state.filters[key]].sort(), Boolean(state.filterAllSelected[key]),
+    [...state.filterExclusions[key]].sort()
+  ]));
+}
+
+function getPerformanceCache() {
+  const records = getAnalysisRecords();
+  if (performanceCache?.records === records) return performanceCache;
+  performanceCache?.worker?.terminate();
+  performanceCache = {
+    records, dates: DashboardPerformance.dateIndex(records), facets: new Map(),
+    encoded: null, worker: null, pending: null, context: null
+  };
+  return performanceCache;
+}
+
+function ensureFacetIndex(cache) {
+  if (cache.encoded) return;
+  cache.encoded = DashboardPerformance.encode(cache.records, DIMENSIONS.map(d => d.key), BLANK);
+  cache.emptyCounts = cache.encoded.values.map(values => new Map(values
+    .filter(value => !isHiddenFilterValue(value)).map(value => [value, null])));
+  if (typeof Worker === "undefined") return;
+  try {
+    const worker = new Worker("filter-count-worker.js");
+    cache.worker = worker;
+    worker.onmessage = ({ data }) => {
+      if (performanceCache !== cache) return;
+      cache.pending = null;
+      saveFacetCounts(cache, data.signature, data.counts);
+      refreshVisibleFilterOptions();
+    };
+    worker.onerror = () => {
+      worker.terminate();
+      cache.worker = null;
+      cache.pending = null;
+      if (performanceCache === cache) refreshVisibleFilterOptions();
+    };
+    worker.postMessage({ type: "init", columns: cache.encoded.columns, sizes: cache.encoded.values.map(v => v.length) });
+  } catch (error) {
+    cache.worker?.terminate();
+    cache.worker = null;
+  }
+}
+
+function saveFacetCounts(cache, signature, counts) {
+  cache.facets.set(signature, counts.map((column, dimension) => new Map(
+    cache.encoded.values[dimension].map((value, index) => [value, column[index]])
+      .filter(([value]) => !isHiddenFilterValue(value))
+  )));
+  if (cache.facets.size > 6) cache.facets.delete(cache.facets.keys().next().value);
+}
+
+function ensureProductResults() {
+  const context = state.renderContext;
+  if (!context || productContext === context) return;
+  state.productRows = buildProductResults(context.current, context.comparison, context.hasComparison);
+  productContext = context;
+  productPage = 0;
+}
 const currencyFormat = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 });
 const compactCurrencyFormat = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", notation: "compact", maximumFractionDigits: 1 });
 const numberFormat = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 0 });
@@ -314,6 +382,7 @@ async function init() {
   populateDimensionSelect();
   renderColumnSettings();
   bindEvents();
+  if (typeof MarkdownChecker !== "undefined") MarkdownChecker.init();
   await refreshRepositoryData({ preserveDates: false });
 }
 
@@ -432,9 +501,9 @@ function bindEvents() {
   dom.previousPeriod.addEventListener("click", () => setPreviousPeriod(false));
   dom.dimensionSelect.addEventListener("change", handlePivotDimensionChange);
   dom.breakdownSelect?.addEventListener("change", handlePivotBreakdownChange);
-  dom.sortSelect.addEventListener("change", renderAll);
-  dom.sortDir.addEventListener("change", renderAll);
-  dom.rowLimit.addEventListener("change", renderAll);
+  dom.sortSelect.addEventListener("change", refreshPivotSort);
+  dom.sortDir.addEventListener("change", refreshPivotSort);
+  dom.rowLimit.addEventListener("change", renderPivotOutputs);
   dom.regionalProductRegion?.addEventListener("change", handleRegionalProductRegionChange);
   dom.regionalProductSort.addEventListener("change", handleRegionalProductSortChange);
   dom.exportCsv.addEventListener("click", exportPivotCsv);
@@ -443,6 +512,13 @@ function bindEvents() {
   dom.exportRegionalCsv.addEventListener("click", exportRegionalTopProductsCsv);
   dom.toggleProductResults?.addEventListener("click", () => setProductPanelCollapsed(true));
   dom.showProductResults?.addEventListener("click", () => setProductPanelCollapsed(false));
+  document.getElementById("product-pagination")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-product-page]");
+    if (!button) return;
+    productPage += Number(button.dataset.productPage);
+    renderProductTable(state.productRows);
+    dom.productTbody.closest(".table-scroll").scrollTop = 0;
+  });
   dom.clearFilters.addEventListener("click", clearAllFilters);
   dom.expandFilters?.addEventListener("click", () => setAllFilterGroupsOpen(true));
   dom.collapseFilters?.addEventListener("click", () => setAllFilterGroupsOpen(false));
@@ -835,6 +911,7 @@ function handleViewTabClick(event) {
 
   const view = button.dataset.viewTab;
   state.activeView = view;
+  document.querySelector(".app-shell")?.classList.toggle("markdown-active", view === "markdown");
   document.querySelectorAll("[data-view-tab]").forEach((tab) => {
     const isActive = tab.dataset.viewTab === view;
     tab.classList.toggle("active", isActive);
@@ -879,7 +956,7 @@ function handleTableSortClick(event) {
       dom.sortSelect.value = key;
       dom.sortDir.value = key === "value" || key === "status" ? "asc" : "desc";
     }
-    renderAll();
+    refreshPivotSort();
     return;
   }
 
@@ -890,6 +967,7 @@ function handleTableSortClick(event) {
       state.productSort.key = key;
       state.productSort.dir = key === "productTitle" || key === "sku" || key === "status" ? "asc" : "desc";
     }
+    productPage = 0;
     renderProductTable(state.productRows);
     return;
   }
@@ -929,6 +1007,7 @@ function handleCollapseToggle(event) {
   target.hidden = !isExpanded;
   button.setAttribute("aria-expanded", String(isExpanded));
   button.textContent = isExpanded ? "Collapse" : "Expand";
+  if (isExpanded && target === dom.trendChart) renderTrendTable(getCurrentTrendRecords());
 }
 
 function handlePivotDimensionChange() {
@@ -1095,6 +1174,10 @@ function setProductPanelCollapsed(collapsed) {
     console.warn("Could not save product panel state.", error);
   }
   applyProductPanelState();
+  if (!state.productPanelCollapsed) {
+    ensureProductResults();
+    renderProductTable(state.productRows);
+  }
 }
 
 function applyProductPanelState() {
@@ -1444,7 +1527,7 @@ async function loadRepositoryData({ forceRefresh = false } = {}) {
   const fileMetas = [];
   const cacheKeys = [];
 
-  for (const file of files) {
+  const loaded = await DashboardPerformance.mapLimit(files, 2, async (file) => {
     const sourceHash = `repo:${file.path}`;
     let addedRecords = null;
     let fileMeta = null;
@@ -1476,6 +1559,9 @@ async function loadRepositoryData({ forceRefresh = false } = {}) {
       }, addedRecords, "Repository");
     }
 
+    return { addedRecords, fileMeta };
+  });
+  for (const { addedRecords, fileMeta } of loaded) {
     appendItems(records, addedRecords);
     fileMetas.push(fileMeta);
   }
@@ -2322,22 +2408,28 @@ function renderAll(options = {}) {
 function buildRenderContext() {
   const analysisRecords = getAnalysisRecords();
   const periods = getAppliedPeriods();
-  const filtered = applyDimensionFilters(analysisRecords);
-  const current = filtered.filter((record) => inDateRange(record, periods.currentStart, periods.currentEnd));
+  const cache = getPerformanceCache();
+  const signature = filterSignature() + JSON.stringify(periods);
+  if (cache.contextSignature === signature && cache.context) return cache.context;
+  const activeDimensions = DIMENSIONS.filter(({ key }) => state.filters[key]?.size
+    || (state.filterAllSelected[key] && state.filterExclusions[key]?.size));
+  const accepts = record => activeDimensions.every(({ key }) => isDimensionValueAllowed(key, record[key] || BLANK));
+  const current = cache.dates.select(periods.currentStart, periods.currentEnd, accepts);
   const comparisonBasis = getComparisonBasis(periods);
   const hasComparison = comparisonBasis.hasComparison;
   const comparisonSource = hasComparison
-    ? filtered.filter((record) => inDateRange(record, comparisonBasis.sourceStart, comparisonBasis.sourceEnd))
+    ? cache.dates.select(comparisonBasis.sourceStart, comparisonBasis.sourceEnd, accepts)
     : [];
   const comparison = applyComparisonBasis(comparisonSource, comparisonBasis);
   const currentSummary = summarize(current);
   const compareSummary = summarize(comparison);
 
-  return {
+  let filtered;
+  const context = {
     analysisRecords,
     periods,
     comparisonBasis,
-    filtered,
+    get filtered() { return filtered || (filtered = analysisRecords.filter(accepts)); },
     current,
     comparisonSource,
     comparison,
@@ -2345,6 +2437,9 @@ function buildRenderContext() {
     currentSummary,
     compareSummary
   };
+  cache.contextSignature = signature;
+  cache.context = context;
+  return context;
 }
 
 function updateDatasetSummary(context) {
@@ -2355,13 +2450,14 @@ function updateDatasetSummary(context) {
 
 function renderGlobalDashboardOutputs(context) {
   renderKpis(context.currentSummary, context.compareSummary, context.hasComparison);
-  const statusSplit = buildStatusSplit(context.current, context.comparison, context.hasComparison);
-  state.statusRows = statusSplit.rows;
-  state.statusTotals = statusSplit.totals;
-  state.pivotRows = buildPivot(context.current, context.comparison, context.hasComparison);
-  state.productRows = buildProductResults(context.current, context.comparison, context.hasComparison);
-  renderFiles();
-  renderProductTable(state.productRows);
+  if (renderedFiles !== state.files) {
+    renderFiles();
+    renderedFiles = state.files;
+  }
+  if (!state.productPanelCollapsed) {
+    ensureProductResults();
+    renderProductTable(state.productRows);
+  }
 }
 
 function markDashboardViewsDirty() {
@@ -2380,7 +2476,17 @@ function renderDirtyActiveView(context = state.renderContext) {
 function renderDashboardView(view, context = state.renderContext) {
   if (!context) return;
 
+  if (view === "markdown") {
+    MarkdownChecker.activate();
+    state.viewDirty.markdown = false;
+    return;
+  }
+
   if (view === "performance") {
+    const statusSplit = buildStatusSplit(context.current, context.comparison, context.hasComparison);
+    state.statusRows = statusSplit.rows;
+    state.statusTotals = statusSplit.totals;
+    state.pivotRows = buildPivot(context.current, context.comparison, context.hasComparison);
     renderTrendTable(context.current);
     renderStatusSplitTable(state.statusRows, state.statusTotals);
     renderPivotOutputs();
@@ -2471,7 +2577,7 @@ function renderFilters() {
         <div class="filter-body">
           <input type="search" data-filter-search="${dimension.key}" value="${escapeHtml(search)}" placeholder="Search">
           <button class="text-button" data-filter-toggle-all="${dimension.key}" type="button">${escapeHtml(getFilterToggleButtonLabel(dimension.key))}</button>
-          <div class="filter-options" data-filter-options="${dimension.key}">${renderFilterOptionMarkup(dimension)}</div>
+          <div class="filter-options" data-filter-options="${dimension.key}">${isOpen ? renderFilterOptionMarkup(dimension) : ""}</div>
         </div>
       </details>
     `;
@@ -2491,14 +2597,14 @@ function renderFilterOptionMarkup(dimension) {
 
   const optionMarkup = options.map(([value, count]) => {
     const id = `${dimension.key}-${hashString(value)}`;
-    const hasRelevantData = count > 0;
+    const hasRelevantData = count === null || count > 0;
     const checked = selected.size > 0 ? selected.has(value) : allSelected && !excluded.has(value);
     const isExcluded = allSelected && !checked && excluded.has(value);
     return `
       <label class="filter-option ${hasRelevantData ? "" : "is-empty"} ${isExcluded ? "is-excluded" : ""}" for="${id}" title="${escapeHtml(value)}">
         <input id="${id}" type="checkbox" data-filter-option="${dimension.key}" value="${escapeHtml(value)}" ${checked ? "checked" : ""}>
         <span>${escapeHtml(value)}</span>
-        <em>${numberFormat.format(count)}</em>
+        <em>${count === null ? "..." : numberFormat.format(count)}</em>
       </label>
     `;
   }).join("");
@@ -2507,16 +2613,26 @@ function renderFilterOptionMarkup(dimension) {
 }
 
 function getFilterCounts(key) {
-  const counts = new Map();
-  for (const record of getAnalysisRecords()) {
-    const value = record[key] || BLANK;
-    if (isHiddenFilterValue(value)) continue;
-    if (!counts.has(value)) counts.set(value, 0);
-    if (recordMatchesOtherFilters(record, key)) {
-      counts.set(value, counts.get(value) + 1);
+  const cache = getPerformanceCache();
+  ensureFacetIndex(cache);
+  const signature = filterSignature();
+  const dimension = DIMENSIONS.findIndex(item => item.key === key);
+  if (cache.facets.has(signature)) return cache.facets.get(signature)[dimension];
+  if (!cache.pending) {
+    const allowed = DIMENSIONS.map(({ key }, index) => {
+      if (!state.filters[key]?.size && !(state.filterAllSelected[key] && state.filterExclusions[key]?.size)) return null;
+      return Uint8Array.from(cache.encoded.values[index], value => Number(isDimensionValueAllowed(key, value)));
+    });
+    if (cache.worker) {
+      cache.pending = signature;
+      cache.worker.postMessage({ signature, allowed });
+    } else {
+      saveFacetCounts(cache, signature, DashboardPerformance.countFacets(
+        cache.encoded.columns, cache.encoded.values.map(v => v.length), allowed
+      ));
     }
   }
-  return counts;
+  return cache.facets.get(signature)?.[dimension] || cache.emptyCounts[dimension];
 }
 
 function recordMatchesOtherFilters(record, excludeKey) {
@@ -2653,6 +2769,7 @@ function handleFilterToggle(event) {
   const group = event.target.closest("[data-filter-group]");
   if (!group) return;
   state.filterOpen[group.dataset.filterGroup] = group.open;
+  if (group.open) renderFilterOptions(group.dataset.filterGroup);
 }
 
 function updateFilterCountLabel(key) {
@@ -3021,25 +3138,19 @@ function handleCompareSelectionClick(event) {
 }
 
 function getCurrentTrendRecords() {
-  const periods = getAppliedPeriods();
-  return getFilteredTrendRecords()
-    .filter((record) => inDateRange(record, periods.currentStart, periods.currentEnd));
+  return buildRenderContext().current;
 }
 
 function getCompareTrendRecords() {
-  const periods = getAppliedPeriods();
-  const basis = getComparisonBasis(periods);
-  if (!basis.hasComparison) return [];
-  return getFilteredTrendRecords()
-    .filter((record) => inDateRange(record, basis.sourceStart, basis.sourceEnd));
+  return buildRenderContext().comparisonSource;
 }
 
 function getFilteredTrendRecords() {
-  return applyDimensionFilters(getAnalysisRecords());
+  return buildRenderContext().filtered;
 }
 
 function renderTrendTable(filteredRecords) {
-  if (!dom.trendChart) return;
+  if (!dom.trendChart || dom.trendChart.hidden) return;
 
   state.trendGrain = dom.trendGrain.value || state.trendGrain || "week";
   state.trendMetric = getTrendMetricMode();
@@ -4880,6 +4991,13 @@ function renderStatusSplitCell(row, column, isTotal = false) {
   return `<td class="${tableCellClass(column, getDeltaClass(row, column.key))}">${value}</td>`;
 }
 
+function refreshPivotSort() {
+  const context = state.renderContext;
+  if (!context) return;
+  state.pivotRows = buildPivot(context.current, context.comparison, context.hasComparison);
+  renderPivotOutputs();
+}
+
 function renderPivotOutputs() {
   const visibleRows = getVisiblePivotRows();
   renderPivotNameFilter();
@@ -5324,7 +5442,7 @@ function sortProductRows(rows) {
 }
 
 function renderProductTable(rows) {
-  if (!dom.productTbody) return;
+  if (!dom.productTbody || state.productPanelCollapsed) return;
 
   const sortedRows = sortProductRows(rows);
   const columns = getTableColumns("product");
@@ -5340,13 +5458,22 @@ function renderProductTable(rows) {
   dom.productHeading.textContent = `Product Results (${numberFormat.format(rows.length)} ${suffix})`;
   dom.productThead.innerHTML = `<tr>${columns.map((column) => renderTableHeader("product", column)).join("")}</tr>`;
   updateSortHeaderStates();
+  const pageCount = Math.max(1, Math.ceil(sortedRows.length / PRODUCT_PAGE_SIZE));
+  productPage = Math.max(0, Math.min(productPage, pageCount - 1));
+  const offset = productPage * PRODUCT_PAGE_SIZE;
+  const pager = document.getElementById("product-pagination");
+  if (pager) {
+    pager.innerHTML = `<button class="button compact" type="button" data-product-page="-1" aria-label="Previous product page" title="Previous page" ${productPage === 0 ? "disabled" : ""}>&larr;</button>
+      <span aria-live="polite">${sortedRows.length ? offset + 1 : 0}-${Math.min(offset + PRODUCT_PAGE_SIZE, sortedRows.length)} of ${numberFormat.format(sortedRows.length)}</span>
+      <button class="button compact" type="button" data-product-page="1" aria-label="Next product page" title="Next page" ${productPage === pageCount - 1 ? "disabled" : ""}>&rarr;</button>`;
+  }
 
   if (!sortedRows.length) {
     dom.productTbody.innerHTML = `<tr><td colspan="${columns.length}">No products for the selected period and filters</td></tr>`;
     return;
   }
 
-  const bodyRows = sortedRows.map((row) => `
+  const bodyRows = sortedRows.slice(offset, offset + PRODUCT_PAGE_SIZE).map((row) => `
     <tr>
       ${columns.map((column) => renderProductCell(row, column)).join("")}
     </tr>
@@ -6266,18 +6393,7 @@ function setPreviousPeriod(shouldRender = true, options = {}) {
 }
 
 function getDatasetDateSummary() {
-  const records = getAnalysisRecords();
-  if (!records.length) return null;
-  let min = "";
-  let max = "";
-
-  for (const record of records) {
-    if (!record.dateKey) continue;
-    if (!min || record.dateKey < min) min = record.dateKey;
-    if (!max || record.dateKey > max) max = record.dateKey;
-  }
-
-  return min && max ? { min, max } : null;
+  return getPerformanceCache().dates.summary;
 }
 
 function getActiveDimension() {
@@ -6295,6 +6411,7 @@ function getRowLimit() {
 }
 
 function exportPivotCsv() {
+  ensureViewFresh("performance");
   const dimension = getActiveDimension();
   const breakdown = getActiveBreakdownDimension();
   const rows = getVisiblePivotRows();
@@ -6319,6 +6436,7 @@ function exportPivotCsv() {
 }
 
 function exportProductCsv() {
+  ensureProductResults();
   const columns = getTableColumns("product");
   const rows = sortProductRows(state.productRows);
   const headers = columns.map((column) => column.label);

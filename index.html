@@ -151,6 +151,7 @@
           <button class="tab-button" type="button" role="tab" aria-selected="false" data-view-tab="trade">Trade Meeting</button>
           <button class="tab-button" type="button" role="tab" aria-selected="false" data-view-tab="compare">Product Compare</button>
           <button class="tab-button" type="button" role="tab" aria-selected="false" data-view-tab="regional">Regional Top 20</button>
+          <button class="tab-button" type="button" role="tab" aria-selected="false" data-view-tab="markdown">Markdown Performance</button>
         </div>
 
         <section class="dashboard-view active" data-view-panel="performance" role="tabpanel">
@@ -493,6 +494,8 @@
           </div>
         </section>
 
+        <section id="markdown-view" class="dashboard-view" data-view-panel="markdown" role="tabpanel" hidden></section>
+
         <section class="dashboard-view" data-view-panel="settings" role="tabpanel" hidden>
           <section class="panel settings-panel">
             <div class="panel-head">
@@ -573,9 +576,13 @@
             <tbody id="product-tbody"></tbody>
           </table>
         </div>
+        <nav id="product-pagination" class="product-pagination" aria-label="Product result pages"></nav>
       </aside>
     </main>
 
+    <script src="markdown-core.js" defer></script>
+    <script src="markdown.js" defer></script>
+    <script src="performance-core.js" defer></script>
     <script src="app.js" defer></script>
   </body>
 </html>

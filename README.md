@@ -67,7 +67,7 @@ http://localhost:8080
 ## GitHub Pages
 
 1. Create a new GitHub repository.
-2. Upload the repository files, including `.github/workflows/pages.yml`, `tools/`, `index.html`, `styles.css`, `app.js`, `.nojekyll`, `data/`, and this `README.md`.
+2. Upload the repository files, including `.github/workflows/pages.yml`, `tools/`, `index.html`, `styles.css`, all root JavaScript files, `.nojekyll`, `data/`, and this `README.md`.
 3. In GitHub, go to `Settings` > `Pages`.
 4. Set the source to `GitHub Actions`.
 5. Commit to `main` or `master`, or run the `Build and Deploy Pages` workflow manually.
@@ -82,6 +82,12 @@ https://your-username.github.io/your-repo-name/
 If the page says `App loading...` and never changes to `Ready`, `app.js` is not being served or was not uploaded. If repository data fails to load, the status bar at the top of the dashboard will show the error.
 
 ## Data Storage
+
+### Browser Performance
+
+Filter counts are cached and calculated in a background worker; typing searches those cached options instead of scanning sales rows. Date selections use a date index, and hidden views defer calculations until opened. Product Results shows 100 products per page; its totals, sales shares, and CSV export still include all matching products. Repository files load two at a time while preserving manifest order.
+
+Include `performance-core.js` and `filter-count-worker.js` when deploying app updates. No compiled data rebuild is required for these browser optimizations. The weekly CSV and manifest upload process is unchanged. Existing IndexedDB data caching remains in place; browsers without worker support use the same calculations on the main thread.
 
 Dashboard data is centralized in the GitHub repository. The app loads only the files listed in `data/manifest.json`, so every user who opens the same GitHub Pages URL sees the same dataset.
 
@@ -130,6 +136,24 @@ node tools/build-compiled-data.js
 On GitHub Pages, `.github/workflows/pages.yml` runs this compiler automatically before deployment. The workflow publishes only the dashboard files, `data/manifest.json`, `data/compiled-data.json`, and `data/compiled/*.json`; raw CSV files stay in the repository but are not included in the Pages artifact. This keeps the deployed site smaller and avoids re-publishing the full CSV history on every update.
 
 The compiler creates one compiled JSON file per source CSV, so a normal weekly append only creates one new compiled file plus a refreshed `data/compiled-data.json` index. When the compiled files match `data/manifest.json`, the dashboard loads them instead of parsing every CSV in the browser. If the compiled data is missing or stale in local development, the dashboard falls back to the CSV files automatically.
+
+## Markdown Performance
+
+The Markdown Performance tab compares the NEW and FURTHER cohorts from a markdown list against shared dashboard sales. It has its own period, region, brand, and department controls; dashboard filters, graph selections, and Compare As settings do not affect this view. All price statuses, including returns, are included so pre-markdown full-price activity remains in the baseline.
+
+1. Import a markdown list (CSV, XLSX, or XLSB). The importer locates STYLE ID/SKU and ACTION headers, including the row-4 layout. Inventory sheets are skipped.
+2. Choose the sheet and confirm its go-live date, including the year. Dates inferred from filenames without a year use the latest loaded sales year as a suggestion. Retail Only sheets require explicit channel confirmation and are never combined automatically with All Channels.
+3. Add the list. Multiple lists can be saved locally; select one launch at a time. Imported workbooks are not uploaded to GitHub or another service. Saved lists are browser-specific and can be removed; they are not centralized like sales data.
+4. Select Launch to Saturday (compared with the same weekdays one week earlier), First 7 days (versus the preceding seven days), or Custom. Click Apply after editing dates or filters. All comparisons use period totals; unequal lengths are flagged.
+5. Review the two-row sales/unit split, optional comparison columns, and expandable product results. Export the split or visible product results, or copy the trade summary.
+
+Matching normalizes leading zeroes and sums all product-title variants for each SKU. Repeated identical list actions are consolidated; conflicting actions block import. Invalid list rows must be corrected before import. Unmatched styles stay unavailable and are excluded from totals, never silently converted to zero. Styles with activity in either window can have zero in the other window. Missing dataset dates suppress the affected period's totals; this conservative check cannot prove source completeness or stock availability. Overlapping saved repricing events are flagged. No inventory, sell-through, or margin is inferred from the lists' store stock column.
+
+The workbook reader is SheetJS CE 0.20.3. GitHub Actions downloads the pinned reader and license and includes them in the Pages artifact. It loads only when importing an Excel workbook, in a worker. For local Excel imports, run `node tools/fetch-workbook-reader.js` once with network access, or allow the on-demand download from `cdn.sheetjs.com`. CSV imports require no external library. The browser sends no workbook content to the library host.
+
+Deploy the updated `index.html`, `styles.css`, `app.js`, `markdown-core.js`, `markdown.js`, `markdown-import-worker.js`, `.github/workflows/pages.yml`, `tools/prepare-pages-artifact.js`, `tools/fetch-workbook-reader.js`, and `tools/test-markdown.js`. The last file is required by the new CI verification step. Existing weekly CSV/manifest updates stay unchanged. Markdown lists themselves should not be committed to a public repository unless publication is intended.
+
+Regression checks: `node --test tools/test-markdown.js tools/test-analysis-filter.js`. Optional browser checks use Playwright and installed Edge: `node tools/test-markdown-browser.js` with the local dashboard running on port 8080 (or set `DASHBOARD_URL`).
 
 ## Troubleshooting Data Files
 
