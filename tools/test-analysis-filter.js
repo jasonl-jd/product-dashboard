@@ -11,6 +11,7 @@ function loadApp() {
     window: { addEventListener() {} },
     document: { addEventListener() {} }
   });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "performance-core.js"), "utf8"), app);
   vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8"), app);
   vm.runInContext("dom.status = { textContent: '', classList: { toggle() {} } };", app);
   return app;

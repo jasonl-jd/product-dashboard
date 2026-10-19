@@ -10,7 +10,12 @@ const ROOT_FILES = [
   ".nojekyll",
   "index.html",
   "styles.css",
-  "app.js"
+  "app.js",
+  "performance-core.js",
+  "filter-count-worker.js",
+  "markdown-core.js",
+  "markdown.js",
+  "markdown-import-worker.js"
 ];
 
 const DATA_FILES = [
@@ -25,6 +30,7 @@ function main() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
 
   ROOT_FILES.forEach((file) => copyFileIfExists(path.join(ROOT, file), path.join(OUT_DIR, file)));
+  copyDir(path.join(ROOT, "vendor"), path.join(OUT_DIR, "vendor"), (entry) => ["xlsx.full.min.js", "sheetjs-LICENSE.txt"].includes(path.basename(entry)));
 
   const outDataDir = path.join(OUT_DIR, "data");
   fs.mkdirSync(outDataDir, { recursive: true });
