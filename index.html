@@ -126,6 +126,13 @@
       </aside>
 
       <section class="dashboard" aria-live="polite">
+        <div class="view-tabs" role="tablist" aria-label="Dashboard views">
+          <button class="tab-button active" type="button" role="tab" aria-selected="true" data-view-tab="performance">Performance</button>
+          <button class="tab-button" type="button" role="tab" aria-selected="false" data-view-tab="trade">Trade Meeting</button>
+          <button class="tab-button" type="button" role="tab" aria-selected="false" data-view-tab="compare">Product Compare</button>
+          <button class="tab-button" type="button" role="tab" aria-selected="false" data-view-tab="regional">Regional Top 20</button>
+          <button class="tab-button" type="button" role="tab" aria-selected="false" data-view-tab="markdown">Markdown Performance</button>
+        </div>
         <div id="status" class="status-bar">App loading...</div>
 
         <section class="kpi-grid" aria-label="Key metrics">
@@ -145,14 +152,6 @@
             <em id="kpi-orders-delta">0.0%</em>
           </article>
         </section>
-
-        <div class="view-tabs" role="tablist" aria-label="Dashboard views">
-          <button class="tab-button active" type="button" role="tab" aria-selected="true" data-view-tab="performance">Performance</button>
-          <button class="tab-button" type="button" role="tab" aria-selected="false" data-view-tab="trade">Trade Meeting</button>
-          <button class="tab-button" type="button" role="tab" aria-selected="false" data-view-tab="compare">Product Compare</button>
-          <button class="tab-button" type="button" role="tab" aria-selected="false" data-view-tab="regional">Regional Top 20</button>
-          <button class="tab-button" type="button" role="tab" aria-selected="false" data-view-tab="markdown">Markdown Performance</button>
-        </div>
 
         <section class="dashboard-view active" data-view-panel="performance" role="tabpanel">
           <div class="analysis-stack">
